@@ -1,99 +1,164 @@
-# Lift Height Analyzer
+LIFT HEIGHT ANALYZER
+====================
 
-This repository automatically builds a **portable Windows application** using GitHub Actions.
+Lift Height Analyzer is a portable Windows application for automatic analysis of capillary-rise experiment videos.
 
-The computer that runs the finished program does **not** need Python, pip, OpenCV, NumPy, Matplotlib, VS Code, or an internet connection.
+You do NOT need to install:
+- Python
+- pip
+- OpenCV
+- NumPy
+- Matplotlib
+- VS Code
+- any other development software
 
-## What happens automatically
+Internet access is not required to run the application.
 
-Whenever the `main` branch is updated, GitHub starts a fresh Windows build machine and:
 
-1. installs Python on the temporary GitHub runner;
-2. installs the required Python packages;
-3. packages `LiftHeightAnalyzer.py` with PyInstaller;
-4. creates the portable `LiftHeightAnalyzer` folder;
-5. creates `LiftHeightAnalyzer_Windows_x64.zip`;
-6. uploads the finished ZIP as a GitHub Actions artifact.
+QUICK START
+===========
 
-The target laboratory/user computer only receives the finished ZIP.
+1. Extract the downloaded ZIP file.
 
-## Get a ready Windows build
+2. Open the extracted folder:
 
-After pushing these files to GitHub:
+   LiftHeightAnalyzer
 
-1. Open the repository on GitHub.
-2. Open **Actions**.
-3. Select **Build Windows portable application**.
-4. Open the latest successful run.
-5. Under **Artifacts**, download **LiftHeightAnalyzer-Windows-x64**.
-6. Extract the downloaded GitHub artifact.
-7. Inside it is `LiftHeightAnalyzer_Windows_x64.zip`.
-8. Send that ZIP to the end user.
+3. Put your experiment folders inside:
 
-The end user extracts it and double-clicks `LiftHeightAnalyzer.exe`.
+   Experiments
 
-## Run the build manually
+   Example:
 
-The workflow also supports manual builds:
+   LiftHeightAnalyzer
+   |
+   +-- LiftHeightAnalyzer.exe
+   +-- _internal
+   +-- README_USER.txt
+   |
+   +-- Experiments
+       |
+       +-- 0deg
+       |   +-- test_01.mp4
+       |   +-- test_02.mp4
+       |
+       +-- 30deg
+       |   +-- test_01.mp4
+       |   +-- test_02.mp4
+       |
+       +-- 60deg
+           +-- test_01.mp4
+           +-- test_02.mp4
 
-**Actions → Build Windows portable application → Run workflow**
+   Each experiment folder may contain one or more MP4 files.
 
-No local Python installation is needed for this build.
+4. Double-click:
 
-## Permanent versioned release
+   LiftHeightAnalyzer.exe
 
-Pushing a tag beginning with `v` also creates a GitHub Release and attaches the ready-to-send Windows ZIP.
+5. The application automatically uses the included:
 
-Example:
+   Experiments
 
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+   folder.
 
-GitHub then creates a release containing:
+6. Click:
 
-`LiftHeightAnalyzer_Windows_x64.zip`
+   Start analysis
 
-This is useful when you want a permanent version to send to other people.
+7. Wait until the analysis is finished.
 
-## Repository structure
+8. Results will be created automatically inside:
 
-```text
-LiftHeightAnalyzer/
-├── .github/
-│   └── workflows/
-│       └── build-windows.yml
-├── LiftHeightAnalyzer.py
-├── requirements.txt
-├── README.md
-└── README_USER.txt
-```
+   Experiments\_analysis
 
-## End-user workflow
 
-```text
-LiftHeightAnalyzer_Windows_x64.zip
-        ↓
-extract
-        ↓
-LiftHeightAnalyzer/
-├── LiftHeightAnalyzer.exe
-├── _internal/
-├── Experiments/
-└── README_USER.txt
-        ↓
-double-click EXE
-        ↓
-select measurements folder
-        ↓
-Start analysis
-        ↓
-_analysis/
-```
+RESULTS
+=======
 
-## Notes
+For every analysed video, the program creates:
 
-The application is intentionally built in PyInstaller `--onedir` mode. The whole `LiftHeightAnalyzer` directory is portable, but `LiftHeightAnalyzer.exe` must remain beside its `_internal` directory.
+- a marked MP4 video showing the detected/tracked liquid front;
+- a CSV file containing the numerical results;
+- a geometry-check PNG;
+- a plot showing raw, smoothed and tracked capillary-rise data.
 
-GitHub-hosted Windows runners perform the build, so there is no requirement to configure a Windows/Python build environment on the development computer.
+For every experiment folder, the program creates:
+
+- a comparison plot of all tracked runs;
+- an average tracked capillary-rise plot;
+- an average tracked capillary-rise CSV.
+
+For all experiment folders together, the program creates:
+
+- all_folder_averages.png
+
+
+IMPORTANT
+=========
+
+Keep the complete LiftHeightAnalyzer folder together.
+
+In particular, do NOT move:
+
+   LiftHeightAnalyzer.exe
+
+away from:
+
+   _internal
+
+The _internal folder contains the components required by the application.
+
+
+OPTIONAL: USING A DIFFERENT DATA FOLDER
+=======================================
+
+Normally, you only need to put your experiment folders inside the included:
+
+   Experiments
+
+folder and click Start analysis.
+
+If your measurements are already stored somewhere else, you may instead click:
+
+   Select folder...
+
+and select the folder that directly contains your experiment subfolders.
+
+For example:
+
+   D:\Measurements
+   |
+   +-- 0deg
+   +-- 30deg
+   +-- 60deg
+
+The program will then create:
+
+   D:\Measurements\_analysis
+
+This is optional. For normal use, simply use the included Experiments folder.
+
+
+TRACKING METHOD
+===============
+
+The primary result is the tracked capillary-rise curve.
+
+A new higher liquid-front position is accepted only when:
+
+- it is above the previously confirmed position;
+- the detections meet the configured detection-quality threshold;
+- at least 3 of 5 consecutive frames support approximately the same height.
+
+After a level is confirmed, the tracked physical front is not allowed to decrease.
+
+Experiment-folder averages are calculated from the tracked curves.
+
+
+WINDOWS SECURITY MESSAGE
+========================
+
+Because this is a portable research application and may not be digitally signed, Windows may display a SmartScreen warning the first time it is opened on a new computer.
+
+Only run the application if you received the ZIP from a trusted source.
