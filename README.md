@@ -1,80 +1,56 @@
-LIFT HEIGHT ANALYZER
-====================
+# Lift Height Analyzer
 
 Lift Height Analyzer is a portable Windows application for automatic analysis of capillary-rise experiment videos.
 
-You do NOT need to install:
-- Python
-- pip
-- OpenCV
-- NumPy
-- Matplotlib
-- VS Code
-- any other development software
+You do **not** need to install Python, pip, OpenCV, NumPy, Matplotlib, VS Code, or any other development software.
 
-Internet access is not required to run the application.
+Internet access is not required to run the already-built application.
 
-
-QUICK START
-===========
+## Quick start
 
 1. Extract the downloaded ZIP file.
 
-2. Open the extracted folder:
+2. Open the extracted `LiftHeightAnalyzer` folder.
 
-   LiftHeightAnalyzer
+3. Put your experiment folders inside the included `Experiments` folder.
 
-3. Put your experiment folders inside:
+Example:
 
-   Experiments
+```text
+LiftHeightAnalyzer/
+├── LiftHeightAnalyzer.exe
+├── _internal/
+├── README_USER.txt
+├── README_USER.md
+└── Experiments/
+    ├── 0deg/
+    │   ├── test_01.mp4
+    │   └── test_02.mp4
+    ├── 30deg/
+    │   ├── test_01.mp4
+    │   └── test_02.mp4
+    └── 60deg/
+        ├── test_01.mp4
+        └── test_02.mp4
+```
 
-   Example:
+Each experiment folder may contain one or more `.mp4` files.
 
-   LiftHeightAnalyzer
-   |
-   +-- LiftHeightAnalyzer.exe
-   +-- _internal
-   +-- README_USER.txt
-   |
-   +-- Experiments
-       |
-       +-- 0deg
-       |   +-- test_01.mp4
-       |   +-- test_02.mp4
-       |
-       +-- 30deg
-       |   +-- test_01.mp4
-       |   +-- test_02.mp4
-       |
-       +-- 60deg
-           +-- test_01.mp4
-           +-- test_02.mp4
+4. Double-click `LiftHeightAnalyzer.exe`.
 
-   Each experiment folder may contain one or more MP4 files.
+5. The application automatically uses the included `Experiments` folder.
 
-4. Double-click:
-
-   LiftHeightAnalyzer.exe
-
-5. The application automatically uses the included:
-
-   Experiments
-
-   folder.
-
-6. Click:
-
-   Start analysis
+6. Click **Start analysis**.
 
 7. Wait until the analysis is finished.
 
-8. Results will be created automatically inside:
+8. Results are created automatically in:
 
-   Experiments\_analysis
+```text
+Experiments\_analysis
+```
 
-
-RESULTS
-=======
+## Results
 
 For every analysed video, the program creates:
 
@@ -91,57 +67,38 @@ For every experiment folder, the program creates:
 
 For all experiment folders together, the program creates:
 
-- all_folder_averages.png
+- `all_folder_averages.png`
 
+## Important
 
-IMPORTANT
-=========
+Keep the complete `LiftHeightAnalyzer` folder together.
 
-Keep the complete LiftHeightAnalyzer folder together.
+Do **not** move `LiftHeightAnalyzer.exe` away from the `_internal` folder. The `_internal` folder contains components required by the application.
 
-In particular, do NOT move:
+## Optional: use a different data folder
 
-   LiftHeightAnalyzer.exe
+Normally, simply put your experiment folders inside the included `Experiments` folder and click **Start analysis**.
 
-away from:
+If your measurements are already stored somewhere else, click **Select folder...** and select the folder that directly contains the experiment subfolders.
 
-   _internal
+Example:
 
-The _internal folder contains the components required by the application.
+```text
+D:\Measurements\
+├── 0deg\
+├── 30deg\
+└── 60deg\
+```
 
+The program then creates:
 
-OPTIONAL: USING A DIFFERENT DATA FOLDER
-=======================================
+```text
+D:\Measurements\_analysis
+```
 
-Normally, you only need to put your experiment folders inside the included:
+This is optional. For normal use, use the included `Experiments` folder.
 
-   Experiments
-
-folder and click Start analysis.
-
-If your measurements are already stored somewhere else, you may instead click:
-
-   Select folder...
-
-and select the folder that directly contains your experiment subfolders.
-
-For example:
-
-   D:\Measurements
-   |
-   +-- 0deg
-   +-- 30deg
-   +-- 60deg
-
-The program will then create:
-
-   D:\Measurements\_analysis
-
-This is optional. For normal use, simply use the included Experiments folder.
-
-
-TRACKING METHOD
-===============
+## Tracking method
 
 The primary result is the tracked capillary-rise curve.
 
@@ -155,9 +112,7 @@ After a level is confirmed, the tracked physical front is not allowed to decreas
 
 Experiment-folder averages are calculated from the tracked curves.
 
-
-WINDOWS SECURITY MESSAGE
-========================
+## Windows security message
 
 Because this is a portable research application and may not be digitally signed, Windows may display a SmartScreen warning the first time it is opened on a new computer.
 
