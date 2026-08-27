@@ -1,0 +1,96 @@
+name: Build Windows portable application
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Build portable application
+        shell: pwsh
+        run: |
+          python -m PyInstaller `
+            --noconfirm `
+            --clean `
+            --onedir `
+            --windowed `
+            --name LiftHeightAnalyzer `
+            --collect-all matplotlib `
+            LiftHeightAnalyzer.py
+
+      - name: Add user files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "dist\LiftHeightAnalyzer\Experiments" | Out-Null
+          Copy-Item "README_USER.txt" "dist\LiftHeightAnalyzer\README_USER.txt" -Force
+
+      - name: Verify package
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist\LiftHeightAnalyzer\LiftHeightAnalyzer.exe")) {
+            throw "LiftHeightAnalyzer.exe was not created."
+          }
+
+          if (!(Test-Path "dist\LiftHeightAnalyzer\_internal")) {
+            throw "PyInstaller _internal folder was not created."
+          }
+
+          Write-Host "Portable Windows package created successfully."
+          Get-ChildItem "dist\LiftHeightAnalyzer"
+
+      - name: Create ready-to-send ZIP
+        shell: pwsh
+        run: |
+          if (Test-Path "LiftHeightAnalyzer_Windows_x64.zip") {
+            Remove-Item "LiftHeightAnalyzer_Windows_x64.zip" -Force
+          }
+
+          Compress-Archive `
+            -Path "dist\LiftHeightAnalyzer" `
+            -DestinationPath "LiftHeightAnalyzer_Windows_x64.zip" `
+            -CompressionLevel Optimal
+
+      - name: Upload ready Windows package
+        uses: actions/upload-artifact@v7
+        with:
+          name: LiftHeightAnalyzer-Windows-x64
+          path: LiftHeightAnalyzer_Windows_x64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release for version tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "LiftHeightAnalyzer_Windows_x64.zip" `
+            --title "Lift Height Analyzer ${{ github.ref_name }}" `
+            --generate-notes
