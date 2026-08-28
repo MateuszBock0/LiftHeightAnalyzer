@@ -4133,10 +4133,7 @@ def prepare_front_geometry(
 
     y_end = min(
         sample_y_max,
-        int(
-            FRONT_SEARCH_BOTTOM
-            * h
-        ),
+        h - 1,
         int(
             np.floor(
                 zero_y
@@ -6426,117 +6423,23 @@ def save_folder_average_csv(
 def save_folder_average_plot(
     output_path,
     folder_name,
-    average
-):
-
-    fig, ax = plt.subplots(
-        figsize=(
-            9,
-            5
-        )
-    )
-
-    time = average[
-        "time_s"
-    ]
-
-    mean = average[
-        "mean_mm"
-    ]
-
-    std = average[
-        "std_mm"
-    ]
-
-    count = average[
-        "n_measurements"
-    ]
-
-    multi = (
-        count
-        > 1
-    )
-
-    single = (
-        count
-        == 1
-    )
-
-    if np.any(
-        multi
-    ):
-
-        ax.errorbar(
-            time[
-                multi
-            ],
-            mean[
-                multi
-            ],
-            yerr=std[
-                multi
-            ],
-            fmt="o",
-            markersize=3,
-            linewidth=0.8,
-            capsize=2,
-            label="Measured mean ±1 SD"
-        )
-
-    if np.any(
-        single
-    ):
-
-        ax.scatter(
-            time[
-                single
-            ],
-            mean[
-                single
-            ],
-            s=12,
-            label="Single contributing measurement"
-        )
-
-    ax.set_xlabel(
-        "Time [s]"
-    )
-
-    ax.set_ylabel(
-        "Capillary rise [mm]"
-    )
-
-    ax.set_title(
-        f"{folder_name} | Average"
-    )
-
-    ax.grid(
-        True,
-        alpha=0.30
-    )
-
-    ax.legend()
-
-    fig.tight_layout()
-
-    fig.savefig(
-        output_path,
-        dpi=FIGURE_DPI
-    )
-
-    plt.close(
-        fig
-    )
-
-
-
-
-def save_folder_comparison_plot(
-    output_path,
-    folder_name,
     video_results,
     average
 ):
+    """
+    Plot all successfully analysed videos in this experiment
+    folder together with the folder average.
+
+    Individual videos:
+        - different automatic Matplotlib colours;
+        - different marker shapes;
+        - thin, semi-transparent lines.
+
+    The average is slightly more prominent but remains
+    semi-transparent.
+
+    No missing measurement is interpolated.
+    """
 
     fig, ax = plt.subplots(
         figsize=(
@@ -6545,7 +6448,24 @@ def save_folder_comparison_plot(
         )
     )
 
-    for run in video_results:
+    marker_cycle = [
+        "o",
+        "s",
+        "^",
+        "D",
+        "v",
+        "P",
+        "X",
+        "<",
+        ">",
+        "*",
+        "h",
+        "p"
+    ]
+
+    for video_index, run in enumerate(
+        video_results
+    ):
 
         times = np.asarray(
             run[
@@ -6565,30 +6485,289 @@ def save_folder_comparison_plot(
             values
         )
 
-        ax.scatter(
+        actual_count = int(
+            np.sum(
+                mask
+            )
+        )
+
+        if actual_count == 0:
+            continue
+
+        marker_every = max(
+            1,
+            actual_count
+            // 40
+        )
+
+        ax.plot(
             times[
                 mask
             ],
             values[
                 mask
             ],
-            s=6,
-            alpha=0.65,
+            linestyle="-",
+            linewidth=0.75,
+            alpha=0.48,
+            marker=marker_cycle[
+                video_index
+                % len(
+                    marker_cycle
+                )
+            ],
+            markersize=3.2,
+            markevery=marker_every,
             label=run[
                 "video_name"
             ]
         )
 
-    ax.scatter(
+    average_time = np.asarray(
         average[
             "time_s"
         ],
+        dtype=np.float64
+    )
+
+    average_mean = np.asarray(
         average[
             "mean_mm"
         ],
-        s=14,
+        dtype=np.float64
+    )
+
+    average_std = np.asarray(
+        average[
+            "std_mm"
+        ],
+        dtype=np.float64
+    )
+
+    average_count = np.asarray(
+        average[
+            "n_measurements"
+        ],
+        dtype=int
+    )
+
+    average_marker_every = max(
+        1,
+        len(
+            average_time
+        )
+        // 45
+    )
+
+    ax.plot(
+        average_time,
+        average_mean,
+        linestyle="-",
+        linewidth=1.5,
+        alpha=0.70,
+        marker=".",
+        markersize=4.0,
+        markevery=average_marker_every,
         label=(
-            f"Measured average "
+            f"Average "
+            f"(videos={average['n']})"
+        )
+    )
+
+    spread_mask = (
+        average_count
+        > 1
+    )
+
+    if np.any(
+        spread_mask
+    ):
+
+        ax.fill_between(
+            average_time[
+                spread_mask
+            ],
+            (
+                average_mean[
+                    spread_mask
+                ]
+                - average_std[
+                    spread_mask
+                ]
+            ),
+            (
+                average_mean[
+                    spread_mask
+                ]
+                + average_std[
+                    spread_mask
+                ]
+            ),
+            alpha=0.10,
+            label="±1 SD"
+        )
+
+    ax.set_xlabel(
+        "Time [s]"
+    )
+
+    ax.set_ylabel(
+        "Capillary rise [mm]"
+    )
+
+    ax.set_title(
+        f"{folder_name} | Average"
+    )
+
+    ax.grid(
+        True,
+        alpha=0.30
+    )
+
+    ax.legend(
+        fontsize=8
+    )
+
+    fig.tight_layout()
+
+    fig.savefig(
+        output_path,
+        dpi=FIGURE_DPI
+    )
+
+    plt.close(
+        fig
+    )
+
+
+def save_folder_comparison_plot(
+    output_path,
+    folder_name,
+    video_results,
+    average
+):
+    """
+    Compare all successfully analysed videos in one folder.
+
+    Individual video traces use automatic different colours,
+    different markers, and thin semi-transparent lines.
+    """
+
+    fig, ax = plt.subplots(
+        figsize=(
+            10,
+            6
+        )
+    )
+
+    marker_cycle = [
+        "o",
+        "s",
+        "^",
+        "D",
+        "v",
+        "P",
+        "X",
+        "<",
+        ">",
+        "*",
+        "h",
+        "p"
+    ]
+
+    for video_index, run in enumerate(
+        video_results
+    ):
+
+        times = np.asarray(
+            run[
+                "time_s"
+            ],
+            dtype=np.float64
+        )
+
+        values = np.asarray(
+            run[
+                "height_final_measured_mm"
+            ],
+            dtype=np.float64
+        )
+
+        mask = np.isfinite(
+            values
+        )
+
+        actual_count = int(
+            np.sum(
+                mask
+            )
+        )
+
+        if actual_count == 0:
+            continue
+
+        marker_every = max(
+            1,
+            actual_count
+            // 40
+        )
+
+        ax.plot(
+            times[
+                mask
+            ],
+            values[
+                mask
+            ],
+            linestyle="-",
+            linewidth=0.75,
+            alpha=0.48,
+            marker=marker_cycle[
+                video_index
+                % len(
+                    marker_cycle
+                )
+            ],
+            markersize=3.2,
+            markevery=marker_every,
+            label=run[
+                "video_name"
+            ]
+        )
+
+    average_time = np.asarray(
+        average[
+            "time_s"
+        ],
+        dtype=np.float64
+    )
+
+    average_mean = np.asarray(
+        average[
+            "mean_mm"
+        ],
+        dtype=np.float64
+    )
+
+    average_marker_every = max(
+        1,
+        len(
+            average_time
+        )
+        // 45
+    )
+
+    ax.plot(
+        average_time,
+        average_mean,
+        linestyle="-",
+        linewidth=1.5,
+        alpha=0.70,
+        marker=".",
+        markersize=4.0,
+        markevery=average_marker_every,
+        label=(
+            f"Average "
             f"(videos={average['n']})"
         )
     )
@@ -6931,12 +7110,59 @@ def process_video(
         ]
     )
 
+    # ========================================================
+    # EXTEND SAMPLE GEOMETRY TO THE CALCULATED 0 mm LINE
+    # ========================================================
+    #
+    # sample_y_max is only the lowest row where the side-edge
+    # detector found sufficiently strong edge evidence.
+    #
+    # In some recordings the lower sample edges become weak because
+    # of glare, reflection, or the liquid surface. The robust left
+    # and right x(y) lines are still valid straight-line fits, so we
+    # evaluate those fitted boundaries down to the independently
+    # calibrated 0 mm ruler line.
+    #
+    # This changes spatial ROI geometry only. It does NOT create,
+    # interpolate, reconstruct, or synthesize any height-vs-time
+    # measurement.
+    detected_sample_y_max = int(
+        sample_y_max
+    )
+
+    sample_analysis_y_max = min(
+        height - 1,
+        int(
+            np.floor(
+                zero_y
+            )
+        )
+    )
+
+    if (
+        sample_analysis_y_max
+        <= sample_y_min
+    ):
+
+        raise RuntimeError(
+            "Calculated 0 mm line is above the usable sample region."
+        )
+
+    emit_log(
+        log_callback,
+        (
+            f"Sample-edge support ends at y={detected_sample_y_max}px; "
+            f"analysis geometry extended to 0 mm at "
+            f"y={sample_analysis_y_max}px."
+        )
+    )
+
     front_geometry = prepare_front_geometry(
         first_frame.shape,
         left_sample_line,
         right_sample_line,
         sample_y_min,
-        sample_y_max,
+        sample_analysis_y_max,
         zero_y
     )
 
@@ -6952,7 +7178,7 @@ def process_video(
         left_sample_line,
         right_sample_line,
         sample_y_min,
-        sample_y_max
+        sample_analysis_y_max
     )
 
     geometry_check = np.hstack(
@@ -8006,7 +8232,7 @@ def process_video(
                 left_sample_line,
                 right_sample_line,
                 sample_y_min,
-                sample_y_max
+                sample_analysis_y_max
             )
 
             marked = draw_front_overlay(
@@ -8179,16 +8405,85 @@ def find_experiment_folders(
     )
 
 
+def should_ignore_video(
+    file_path
+):
+    """
+    Ignore any MP4 whose filename contains 'ignore' anywhere,
+    case-insensitively.
+
+    Examples:
+        1001_TOP_IGNORE.mp4
+        1243r_ignore.mp4
+        ignore_2.mp4
+        dsc1ignore2123.mp4
+    """
+
+    return (
+        "ignore"
+        in Path(
+            file_path
+        ).name.lower()
+    )
+
+
 def find_videos_in_folder(
     folder
 ):
+    """
+    Return only MP4 files that are allowed to participate in the
+    analysis.
+
+    Files containing 'ignore' anywhere in their filename are not
+    counted, processed, averaged, or plotted.
+    """
+
     return sorted(
         [
             file
-            for file in Path(folder).iterdir()
+            for file in Path(
+                folder
+            ).iterdir()
+
             if (
                 file.is_file()
-                and file.suffix.lower() == ".mp4"
+                and
+                file.suffix.lower()
+                == ".mp4"
+                and
+                not should_ignore_video(
+                    file
+                )
+            )
+        ],
+        key=lambda p:
+        p.name.lower()
+    )
+
+
+def find_ignored_videos_in_folder(
+    folder
+):
+    """
+    Return ignored MP4 files for GUI/log reporting only.
+    """
+
+    return sorted(
+        [
+            file
+            for file in Path(
+                folder
+            ).iterdir()
+
+            if (
+                file.is_file()
+                and
+                file.suffix.lower()
+                == ".mp4"
+                and
+                should_ignore_video(
+                    file
+                )
             )
         ],
         key=lambda p:
@@ -8239,10 +8534,37 @@ def process_experiment_folder(
         folder_path
     )
 
+    ignored_videos = (
+        find_ignored_videos_in_folder(
+            folder_path
+        )
+    )
+
+    if ignored_videos:
+
+        emit_log(
+            log_callback,
+            (
+                f"Ignored {len(ignored_videos)} MP4 file(s) "
+                f"in {folder_name} because the filename "
+                f"contains 'ignore':"
+            )
+        )
+
+        for ignored_video in ignored_videos:
+
+            emit_log(
+                log_callback,
+                f"  - {ignored_video.name}"
+            )
+
     if not videos:
         emit_log(
             log_callback,
-            f"No MP4 files in {folder_name}; skipped."
+            (
+                f"No analyzable MP4 files in "
+                f"{folder_name}; skipped."
+            )
         )
         return None, video_counter
 
@@ -8349,6 +8671,7 @@ def process_experiment_folder(
     save_folder_average_plot(
         average_plot,
         folder_name,
+        video_results,
         average,
     )
 
@@ -8442,10 +8765,30 @@ def run_batch_analysis(
         )
     )
 
+    ignored_total = sum(
+        len(
+            find_ignored_videos_in_folder(
+                folder
+            )
+        )
+        for folder
+        in experiment_folders
+    )
+
     emit_log(
         log_callback,
-        f"Total MP4 videos: {total_videos}"
+        f"Total MP4 videos to analyze: {total_videos}"
     )
+
+    if ignored_total > 0:
+
+        emit_log(
+            log_callback,
+            (
+                f"Ignored MP4 videos: "
+                f"{ignored_total}"
+            )
+        )
 
     folder_results = []
     video_counter = 0
