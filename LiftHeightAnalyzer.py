@@ -237,6 +237,220 @@ WETTING_MIN_EDGE_SCORE = 2.0
 
 
 # ============================================================
+# BOTTOM-CONNECTED WETTING VALIDATION
+# ============================================================
+
+# The bottom-connected method is deliberately based on CHANGE
+# relative to frame 0, not on whether copper is simply dark.
+#
+# The upper part of the sample is used to estimate any global
+# illumination shift. A true wet region should then form a
+# temporally changed region connected upward from the liquid side.
+
+# Fraction of the analysed sample profile used as the dry/global
+# illumination reference at the top.
+BOTTOM_UP_DRY_REFERENCE_FRACTION = 0.18
+
+# Ignore the immediate vicinity of the 0 mm line because the
+# meniscus/reflection can be optically unstable.
+BOTTOM_UP_ZERO_EXCLUSION_MM = 0.35
+
+# Bottom-up validation is not trusted below this physical height.
+# If the first visible front is below this, it remains unresolved
+# until enough real image evidence exists.
+BOTTOM_UP_MIN_FRONT_HEIGHT_MM = 0.75
+
+# Analyse the region below a candidate in physical-height chunks.
+BOTTOM_UP_SEGMENT_MM = 0.35
+
+# Bottom-most seed depth used to verify that temporal change really
+# exists close to the liquid side.
+BOTTOM_UP_SEED_DEPTH_MM = 1.50
+
+# A segment is considered changed when its temporal residual exceeds
+# this multiple of measured Lab-L image noise.
+BOTTOM_UP_WEAK_NOISE_MULTIPLIER = 0.85
+
+# The seed close to the liquid should contain a reasonable amount
+# of changed material.
+BOTTOM_UP_MIN_SEED_CHANGED_FRACTION = 0.45
+
+# Fraction of the candidate->bottom path that should remain
+# temporally changed. Small gaps are allowed because porous copper
+# can contain glare/texture.
+BOTTOM_UP_MIN_CONNECTED_FRACTION = 0.55
+
+# Longest tolerated dry/unchanged gap within the connected wet path.
+BOTTOM_UP_MAX_GAP_MM = 1.20
+
+# When several bottom-connected spatial candidates are close to
+# the FIRST bottom-up boundary, use this tolerance to choose the
+# strongest representative actual edge.
+BOTTOM_UP_AGREEMENT_MM = 0.75
+
+# Directional sanity check:
+#
+# A bottom-up boundary is allowed to lie WELL BELOW the strongest
+# raw edge, because the strongest raw edge may be a false feature
+# high on the sample.
+#
+# But a bottom-up boundary should NOT lie far ABOVE a strong raw
+# edge that was encountered closer to the liquid. In that case the
+# detector has skipped a lower boundary and latched onto a higher,
+# false wet-looking feature.
+BOTTOM_UP_MAX_ABOVE_RAW_MM = 1.25
+
+
+# ============================================================
+# RAW-PRIMARY FRONT SELECTION
+# ============================================================
+#
+# The strongest spatial edge is the primary measured front when it
+# passes either:
+#   A. the original absolute-darkening test, or
+#   B. the relative temporal-transition + bottom-connectivity test.
+#
+# Bottom-connectivity is therefore a PHYSICAL VALIDATOR, not an
+# independent instruction to choose the lowest changed feature.
+#
+# This restores the observed rising front in videos where small
+# near-bottom optical boundaries remain visible throughout the run.
+
+# If the raw strongest edge fails, alternative spatial candidates
+# can still rescue the frame. Their score must be at least this
+# fraction of the strongest accepted alternative score.
+RAW_PRIMARY_FALLBACK_SCORE_FRACTION = 0.80
+
+
+# ============================================================
+# FIRST-ANCHOR FORWARD PERSISTENCE
+# ============================================================
+#
+# A short false feature can satisfy 3-of-5 for a few frames and then
+# collapse by tens of millimetres. For the FIRST positive tracking
+# anchor only, inspect later ACTUAL validated frames and require the
+# candidate trajectory not to collapse immediately.
+#
+# This is validation only. No future value is copied backwards.
+
+ONSET_FORWARD_CHECK_FRAMES = 12
+ONSET_FORWARD_MIN_VALID_POINTS = 6
+ONSET_FORWARD_MAX_RETREAT_MM = 0.75
+ONSET_FORWARD_REQUIRED_FRACTION = 0.60
+
+
+# ============================================================
+# EARLY-ONSET PHYSICAL SEARCH BAND
+# ============================================================
+#
+# During the first 0.75 s the physical front must remain below the
+# first major ruler mark (5 mm).
+#
+# IMPORTANT:
+# This is not only a rejection rule. During that first second the
+# detector searches all physically validated spatial candidates
+# between 0 and 5 mm and chooses the UPPERMOST credible
+# bottom-connected candidate.
+#
+# Why:
+# A persistent meniscus/reflection around ~1 mm can be the strongest
+# spatial edge even while the real wetting front has already risen
+# to ~4 mm. The real front is the upper boundary of the
+# liquid-connected changed region.
+#
+# No value is calculated between frames. The selected height is
+# always an actual spatial edge from the current frame.
+# Hard physical rule during the first 0.75 s:
+# the front cannot be above the first major mark.
+EARLY_ONSET_HARD_LIMIT_TIME_S = 0.75
+EARLY_ONSET_HARD_MAX_HEIGHT_MM = 5.00
+
+# The special onset-search mode does NOT switch off at exactly
+# 1.00 s. It stays active until the measured front itself reaches
+# the first major mark and does so persistently.
+EARLY_ONSET_MIN_HEIGHT_MM = 0.20
+
+# After 0.75 s, while onset mode is still active, allow the search to
+# extend modestly above 5 mm so the detector can observe the real
+# crossing and hand over smoothly to normal tracking.
+EARLY_ONSET_RELEASE_SEARCH_MAX_HEIGHT_MM = 6.50
+
+# Hysteresis / release rule:
+# leave onset mode only when at least 3 of the latest 5 ACTUAL
+# selected onset measurements are at or above 5 mm.
+EARLY_ONSET_RELEASE_HEIGHT_MM = 5.00
+EARLY_ONSET_RELEASE_WINDOW = 5
+EARLY_ONSET_RELEASE_REQUIRED = 3
+
+# Do NOT leave onset mode merely because the upper wetting branch
+# reaches 5 mm. The normal strongest spatial edge must also have
+# caught up to that branch.
+#
+# Example we want to prevent:
+#   onset branch  ~= 5.0 mm
+#   strongest raw ~= 1.3 mm  (meniscus / lower optical edge)
+#
+# In that situation onset mode must remain active.
+EARLY_ONSET_RELEASE_RAW_AGREEMENT_MM = 0.75
+
+# During onset tracking, do not jump back to a much lower optical
+# edge (e.g. the ~1.3 mm meniscus) once the upper wetting boundary
+# has already been established.
+EARLY_ONSET_MAX_RETREAT_MM = 0.50
+
+# Consider more spatial candidates while onset mode is active,
+# because the real front can be weaker than the meniscus.
+EARLY_ONSET_MAX_CANDIDATES = 24
+
+# Do not choose an arbitrarily weak high candidate solely because
+# it is uppermost. It must retain at least this fraction of the best
+# physically valid onset-candidate score in the current frame.
+EARLY_ONSET_MIN_SCORE_FRACTION = 0.45
+
+
+# ============================================================
+# TRANSIENT OUTLIER REJECTION
+# ============================================================
+#
+# Purpose:
+# Reject short-lived detector excursions such as:
+#
+#   15 mm -> 79 mm -> 15 mm
+#
+# or
+#
+#   18 mm -> 5 mm -> 18 mm
+#
+# These are NOT corrected or replaced. The affected frames become
+# unresolved (NaN), preserving the rule that no synthetic temporal
+# measurement may be created.
+
+# Maximum duration of a transient excursion that can be rejected.
+# At ~60 fps, 5 frames is ~0.083 s.
+TRANSIENT_MAX_RUN_FRAMES = 5
+
+# Number of neighbouring frames used on each side to establish
+# whether the trajectory before and after the excursion agrees.
+TRANSIENT_CONTEXT_FRAMES = 6
+
+# Minimum number of actual measurements required on EACH side.
+TRANSIENT_MIN_CONTEXT_POINTS = 3
+
+# Before and after the suspect excursion must return to almost the
+# same physical trajectory. This prevents a real sustained rise from
+# being classified as a spike.
+TRANSIENT_BRACKET_TOLERANCE_MM = 1.00
+
+# Minimum excursion away from the bracketed trajectory required
+# before a point can be rejected.
+TRANSIENT_MIN_DEVIATION_MM = 2.00
+
+# Require most actual measurements inside a candidate transient run
+# to depart in the same direction from the local bracketed level.
+TRANSIENT_MIN_RUN_OUTLIER_FRACTION = 0.75
+
+
+# ============================================================
 # LARGE-JUMP RETROSPECTIVE REVIEW
 # ============================================================
 
@@ -1261,6 +1475,325 @@ def find_actual_onset_backtrack(
 
 
 
+
+def reject_transient_measurement_spikes(
+    measured_height_mm
+):
+    """
+    Reject short, bracketed detector excursions without creating
+    replacement values.
+
+    A run is rejected only when:
+        1. it lasts no more than TRANSIENT_MAX_RUN_FRAMES;
+        2. enough actual measurements exist immediately before and
+           after it;
+        3. the before/after trajectory returns to approximately the
+           same height;
+        4. the suspect run departs from that bracketed trajectory by
+           at least TRANSIENT_MIN_DEVIATION_MM.
+
+    This catches vertical needles such as:
+        15 -> 79 -> 15 mm
+    while preserving a genuine sustained rise such as:
+        15 -> 18 -> 21 -> 24 mm
+
+    Rejected frames are set to NaN. They are NEVER replaced by an
+    interpolated, averaged, forward-filled, or reconstructed value.
+
+    Returns
+    -------
+    cleaned:
+        Copy of the measured series with rejected transient frames
+        set to NaN.
+
+    rejected_mask:
+        Boolean mask identifying the actual measured frames that were
+        rejected as short-lived transient outliers.
+    """
+
+    measured = np.asarray(
+        measured_height_mm,
+        dtype=np.float64
+    )
+
+    n = len(
+        measured
+    )
+
+    cleaned = measured.copy()
+
+    rejected_mask = np.zeros(
+        n,
+        dtype=bool
+    )
+
+    context = int(
+        TRANSIENT_CONTEXT_FRAMES
+    )
+
+    max_run = int(
+        TRANSIENT_MAX_RUN_FRAMES
+    )
+
+    min_context = int(
+        TRANSIENT_MIN_CONTEXT_POINTS
+    )
+
+    if (
+        n == 0
+        or
+        context < 1
+        or
+        max_run < 1
+    ):
+
+        return (
+            cleaned,
+            rejected_mask
+        )
+
+    # Multiple passes allow removal of several independent spikes
+    # without synthesising any data.
+    for _ in range(
+        3
+    ):
+
+        found_in_pass = False
+
+        finite = np.isfinite(
+            cleaned
+        )
+
+        for run_length in range(
+            1,
+            max_run + 1
+        ):
+
+            for start in range(
+                1,
+                n - run_length
+            ):
+
+                end = (
+                    start
+                    + run_length
+                )
+
+                run_mask = finite[
+                    start:end
+                ]
+
+                if not np.any(
+                    run_mask
+                ):
+
+                    continue
+
+                before_start = max(
+                    0,
+                    start
+                    - context
+                )
+
+                after_end = min(
+                    n,
+                    end
+                    + context
+                )
+
+                before = cleaned[
+                    before_start:
+                    start
+                ]
+
+                after = cleaned[
+                    end:
+                    after_end
+                ]
+
+                before = before[
+                    np.isfinite(
+                        before
+                    )
+                ]
+
+                after = after[
+                    np.isfinite(
+                        after
+                    )
+                ]
+
+                if (
+                    len(
+                        before
+                    )
+                    < min_context
+                    or
+                    len(
+                        after
+                    )
+                    < min_context
+                ):
+
+                    continue
+
+                before_level = float(
+                    np.median(
+                        before
+                    )
+                )
+
+                after_level = float(
+                    np.median(
+                        after
+                    )
+                )
+
+                # A true transient must return to approximately the
+                # same underlying trajectory after the excursion.
+                if (
+                    abs(
+                        after_level
+                        - before_level
+                    )
+                    >
+                    TRANSIENT_BRACKET_TOLERANCE_MM
+                ):
+
+                    continue
+
+                bracket_level = float(
+                    0.5
+                    * (
+                        before_level
+                        + after_level
+                    )
+                )
+
+                run_values = cleaned[
+                    start:end
+                ]
+
+                run_finite = np.isfinite(
+                    run_values
+                )
+
+                actual_run_values = run_values[
+                    run_finite
+                ]
+
+                if len(
+                    actual_run_values
+                ) == 0:
+
+                    continue
+
+                deviations = (
+                    actual_run_values
+                    - bracket_level
+                )
+
+                large_deviation = (
+                    np.abs(
+                        deviations
+                    )
+                    >= TRANSIENT_MIN_DEVIATION_MM
+                )
+
+                outlier_fraction = float(
+                    np.mean(
+                        large_deviation
+                    )
+                )
+
+                if (
+                    outlier_fraction
+                    <
+                    TRANSIENT_MIN_RUN_OUTLIER_FRACTION
+                ):
+
+                    continue
+
+                large_values = deviations[
+                    large_deviation
+                ]
+
+                if len(
+                    large_values
+                ) == 0:
+
+                    continue
+
+                # Require the transient to depart mainly in one
+                # direction (either a high spike or a low dip).
+                positive_fraction = float(
+                    np.mean(
+                        large_values
+                        > 0.0
+                    )
+                )
+
+                negative_fraction = float(
+                    np.mean(
+                        large_values
+                        < 0.0
+                    )
+                )
+
+                same_direction = (
+                    max(
+                        positive_fraction,
+                        negative_fraction
+                    )
+                    >= TRANSIENT_MIN_RUN_OUTLIER_FRACTION
+                )
+
+                if not same_direction:
+
+                    continue
+
+                # Only reject the actual deviant values in the run.
+                local_indices = np.arange(
+                    start,
+                    end,
+                    dtype=int
+                )[
+                    run_finite
+                ]
+
+                reject_indices = local_indices[
+                    large_deviation
+                ]
+
+                if len(
+                    reject_indices
+                ) == 0:
+
+                    continue
+
+                cleaned[
+                    reject_indices
+                ] = np.nan
+
+                rejected_mask[
+                    reject_indices
+                ] = True
+
+                finite[
+                    reject_indices
+                ] = False
+
+                found_in_pass = True
+
+        if not found_in_pass:
+            break
+
+    return (
+        cleaned,
+        rejected_mask
+    )
+
+
 def build_final_measured_series(
     height_validated_mm,
     confirmation_records,
@@ -1269,18 +1802,21 @@ def build_final_measured_series(
     """
     Build the high-resolution FINAL MEASURED series.
 
-    Every finite value in the returned series is an ACTUAL
-    frame-derived value, except frame 0 which is the explicit
-    experimental initial condition of 0 mm.
+    Every finite positive value is an ACTUAL frame-derived
+    measurement.
 
-    Rules
-    -----
-    1. Keep every temporally validated actual frame measurement.
-    2. Add retrospectively accepted onset measurements only from
-       their exact original raw frame values.
-    3. Never interpolate, reconstruct, smooth, forward-fill, or
-       calculate missing temporal measurements.
-    4. Unresolved frames remain np.nan.
+    No interpolation.
+    No reconstruction.
+    No forward filling.
+    No synthetic values.
+
+    A temporally validated point is promoted into the final series
+    only after the accepted physical trajectory has obtained real
+    temporal support from the confirmation tracker.
+
+    This prevents isolated early false positives from appearing in
+    the final result while still retaining every actual validated
+    frame once the front has been established.
     """
 
     height_validated_mm = np.asarray(
@@ -1298,6 +1834,7 @@ def build_final_measured_series(
     ) != len(
         raw_height_mm
     ):
+
         raise ValueError(
             "Validated and raw height arrays must have equal length."
         )
@@ -1306,9 +1843,10 @@ def build_final_measured_series(
         height_validated_mm
     )
 
-    # Start from every actual temporally validated observation.
-    final_measured = (
-        height_validated_mm.copy()
+    final_measured = np.full(
+        n,
+        np.nan,
+        dtype=np.float64
     )
 
     source = np.full(
@@ -1316,14 +1854,6 @@ def build_final_measured_series(
         "",
         dtype=object
     )
-
-    validated_mask = np.isfinite(
-        final_measured
-    )
-
-    source[
-        validated_mask
-    ] = "validated"
 
     # Explicit experimental initial condition.
     if n > 0:
@@ -1338,10 +1868,124 @@ def build_final_measured_series(
             0
         ] = "initial_condition"
 
-    # Retrospective onset review may recover an actual raw
-    # observation that did not pass the normal temporal threshold.
-    # Use the exact raw value from that frame; do not use a cluster
-    # average or any derived/interpolated height.
+    positive_confirmed_records = [
+        record
+        for record
+        in confirmation_records
+
+        if (
+            record.get(
+                "type"
+            )
+            in (
+                "confirmed",
+                "reviewed"
+            )
+            and
+            int(
+                record[
+                    "anchor_index"
+                ]
+            )
+            > 0
+            and
+            np.isfinite(
+                float(
+                    record[
+                        "height"
+                    ]
+                )
+            )
+        )
+    ]
+
+    # If no positive trajectory was ever confirmed, do not promote
+    # isolated detector outputs into the final scientific series.
+    if positive_confirmed_records:
+
+        first_record = min(
+            positive_confirmed_records,
+            key=lambda record:
+            int(
+                record[
+                    "anchor_index"
+                ]
+            )
+        )
+
+        support_indices = np.asarray(
+            first_record.get(
+                "support_indices",
+                np.asarray(
+                    [
+                        first_record[
+                            "anchor_index"
+                        ]
+                    ],
+                    dtype=int
+                )
+            ),
+            dtype=int
+        )
+
+        finite_support_indices = [
+            int(
+                index
+            )
+            for index
+            in support_indices
+            if (
+                0
+                <= int(
+                    index
+                )
+                < n
+                and
+                np.isfinite(
+                    height_validated_mm[
+                        int(
+                            index
+                        )
+                    ]
+                )
+            )
+        ]
+
+        if finite_support_indices:
+
+            final_start_frame = min(
+                finite_support_indices
+            )
+
+        else:
+
+            final_start_frame = int(
+                first_record[
+                    "anchor_index"
+                ]
+            )
+
+        later_validated = (
+            np.arange(
+                n
+            )
+            >= final_start_frame
+        ) & np.isfinite(
+            height_validated_mm
+        )
+
+        final_measured[
+            later_validated
+        ] = height_validated_mm[
+            later_validated
+        ]
+
+        source[
+            later_validated
+        ] = "validated_confirmed_trajectory"
+
+    # Retrospective onset review is allowed to add only the exact
+    # raw observation from the actual reviewed frame.
     for record in confirmation_records:
 
         if record.get(
@@ -1384,6 +2028,93 @@ def build_final_measured_series(
     return (
         final_measured,
         source
+    )
+
+
+
+def onset_candidate_has_forward_persistence(
+    validated_height_mm,
+    anchor_index,
+    anchor_height
+):
+    """
+    Check whether the FIRST positive anchor persists in later ACTUAL
+    validated measurements.
+
+    A candidate is rejected if it appears briefly and the following
+    actual measurements collapse far below it.
+
+    No height is created, modified, copied, or interpolated.
+    """
+
+    heights = np.asarray(
+        validated_height_mm,
+        dtype=np.float64
+    )
+
+    n = len(
+        heights
+    )
+
+    anchor_index = int(
+        anchor_index
+    )
+
+    anchor_height = float(
+        anchor_height
+    )
+
+    start = max(
+        0,
+        anchor_index + 1
+    )
+
+    end = min(
+        n,
+        start
+        + int(
+            ONSET_FORWARD_CHECK_FRAMES
+        )
+    )
+
+    future = heights[
+        start:end
+    ]
+
+    finite_future = future[
+        np.isfinite(
+            future
+        )
+    ]
+
+    if (
+        len(
+            finite_future
+        )
+        < ONSET_FORWARD_MIN_VALID_POINTS
+    ):
+
+        # Not enough evidence to reject the onset candidate.
+        # This matters for very short videos / end-of-file cases.
+        return True
+
+    noncollapsed = (
+        finite_future
+        >= (
+            anchor_height
+            - ONSET_FORWARD_MAX_RETREAT_MM
+        )
+    )
+
+    fraction = float(
+        np.mean(
+            noncollapsed
+        )
+    )
+
+    return (
+        fraction
+        >= ONSET_FORWARD_REQUIRED_FRACTION
     )
 
 
@@ -1576,6 +2307,33 @@ def build_monotonic_tracked_curve(
                 < current_height
                 + TRACK_MIN_RISE_MM
             ):
+                continue
+
+            # ------------------------------------------------
+            # FIRST POSITIVE ANCHOR:
+            # reject a short-lived false plateau that immediately
+            # collapses in later ACTUAL validated frames.
+            #
+            # Example from Top2:
+            #   ~21 mm for only a few early frames
+            #   followed by ~0.6-1 mm
+            #
+            # The 21 mm values remain in raw diagnostics, but they
+            # are not allowed to establish the tracked trajectory.
+            # ------------------------------------------------
+
+            if (
+                current_height
+                <= TRACK_INITIAL_HEIGHT_MM
+                + 1e-9
+                and
+                not onset_candidate_has_forward_persistence(
+                    validated_height_mm,
+                    anchor_index,
+                    confirmed_height
+                )
+            ):
+
                 continue
 
             if (
@@ -6404,15 +7162,25 @@ def evaluate_wetting_candidate(
     baseline_noise
 ):
     """
-    Evaluate whether an image edge is actually a wetting front.
+    Evaluate temporal evidence across one spatial front candidate.
 
-    Static edges are present in both the first frame and current
-    frame and therefore largely disappear in the temporal
-    difference.
+    Two distinct physical signatures are calculated.
 
-    A true wetting front should show:
-        dry / less changed material above,
-        darker material below.
+    MODE A - absolute darkening
+        Preserves the original behaviour:
+            - strong wet-vs-dry temporal step;
+            - material below the front is darker than frame 0.
+
+    MODE B - relative temporal transition
+        Does NOT assume that wet copper must become darker.
+        It asks only whether the appearance below the candidate
+        changed strongly relative to the appearance above it.
+
+        Mode B is not accepted by itself here. It is combined later
+        with the bottom-connected wet-region test.
+
+    The returned measurement values are always derived from the
+    actual current frame. Nothing is interpolated.
     """
 
     candidate_index = int(
@@ -6429,6 +7197,7 @@ def evaluate_wetting_candidate(
         dtype=np.float32
     )
 
+    # Positive = current frame is darker than frame 0.
     change = (
         baseline_profile
         - current_profile
@@ -6506,6 +7275,12 @@ def evaluate_wetting_candidate(
             "valid":
                 False,
 
+            "absolute_valid":
+                False,
+
+            "relative_valid":
+                False,
+
             "above_change":
                 np.nan,
 
@@ -6515,11 +7290,20 @@ def evaluate_wetting_candidate(
             "step":
                 np.nan,
 
+            "absolute_step":
+                np.nan,
+
             "threshold":
                 np.nan,
 
             "score":
-                0.0
+                0.0,
+
+            "relative_score":
+                0.0,
+
+            "direction":
+                "none"
         }
 
     above_change = float(
@@ -6537,6 +7321,10 @@ def evaluate_wetting_candidate(
     step = float(
         below_change
         - above_change
+    )
+
+    absolute_step = abs(
+        step
     )
 
     threshold = max(
@@ -6557,30 +7345,61 @@ def evaluate_wetting_candidate(
         * threshold
     )
 
-    valid = (
+    relative_valid = (
         np.isfinite(
-            step
+            absolute_step
         )
         and
-        step
+        absolute_step
         >= threshold
+    )
+
+    absolute_valid = (
+        relative_valid
+        and
+        step
+        > 0.0
         and
         below_change
         >= minimum_darkening
     )
 
-    score = (
-        step
+    relative_score = (
+        absolute_step
         / max(
             threshold,
             1e-6
         )
     )
 
+    if step > 0:
+
+        direction = "darker_below"
+
+    elif step < 0:
+
+        direction = "lighter_below"
+
+    else:
+
+        direction = "none"
+
     return {
+        # Keep old key for backward compatibility. It now means
+        # "passes the original absolute-darkening mode".
         "valid":
             bool(
-                valid
+                absolute_valid
+            ),
+
+        "absolute_valid":
+            bool(
+                absolute_valid
+            ),
+
+        "relative_valid":
+            bool(
+                relative_valid
             ),
 
         "above_change":
@@ -6592,12 +7411,441 @@ def evaluate_wetting_candidate(
         "step":
             step,
 
-        "threshold":
-            threshold,
+        "absolute_step":
+            float(
+                absolute_step
+            ),
 
+        "threshold":
+            float(
+                threshold
+            ),
+
+        # `score` is sign-independent now so retrospective review
+        # can also recognise a genuine front that becomes lighter
+        # rather than darker.
         "score":
             float(
-                score
+                relative_score
+            ),
+
+        "relative_score":
+            float(
+                relative_score
+            ),
+
+        "direction":
+            direction
+    }
+
+
+
+def evaluate_bottom_connection(
+    candidate_index,
+    current_profile,
+    baseline_profile,
+    pixels_per_mm,
+    baseline_noise
+):
+    """
+    Test whether a candidate front is the TOP boundary of a
+    temporally changed region that remains connected downward
+    toward the liquid.
+
+    This directly addresses false upper features that merely look
+    wet: a high dark/textured patch cannot qualify unless the
+    changed region below it stays connected all the way toward the
+    liquid side.
+
+    The test is sign-independent:
+        wetting may make the sample darker OR lighter.
+
+    No temporal values are generated. The function only evaluates
+    evidence present in the current frame.
+    """
+
+    candidate_index = int(
+        candidate_index
+    )
+
+    current_profile = np.asarray(
+        current_profile,
+        dtype=np.float32
+    )
+
+    baseline_profile = np.asarray(
+        baseline_profile,
+        dtype=np.float32
+    )
+
+    n = len(
+        current_profile
+    )
+
+    if n < 20:
+
+        return {
+            "valid":
+                False,
+
+            "score":
+                0.0,
+
+            "connected_fraction":
+                0.0,
+
+            "seed_fraction":
+                0.0,
+
+            "longest_gap_mm":
+                np.inf,
+
+            "dry_shift":
+                np.nan,
+
+            "candidate_height_mm":
+                np.nan
+        }
+
+    # Positive means darker than frame 0, negative means lighter.
+    change = (
+        baseline_profile
+        - current_profile
+    )
+
+    dry_count = max(
+        10,
+        int(
+            round(
+                BOTTOM_UP_DRY_REFERENCE_FRACTION
+                * n
+            )
+        )
+    )
+
+    dry_count = min(
+        dry_count,
+        n
+    )
+
+    # Remove global exposure/illumination shift by referencing the
+    # upper part of the sample. Static upper texture then tends
+    # toward zero temporal residual even if it visually resembles
+    # wet material.
+    dry_shift = float(
+        np.median(
+            change[
+                :dry_count
+            ]
+        )
+    )
+
+    residual = (
+        change
+        - dry_shift
+    )
+
+    gap_px = max(
+        1,
+        int(
+            round(
+                WETTING_COMPARE_GAP_MM
+                * pixels_per_mm
+            )
+        )
+    )
+
+    zero_exclusion_px = max(
+        1,
+        int(
+            round(
+                BOTTOM_UP_ZERO_EXCLUSION_MM
+                * pixels_per_mm
+            )
+        )
+    )
+
+    usable_bottom = (
+        n
+        - zero_exclusion_px
+    )
+
+    path_start = min(
+        n,
+        candidate_index
+        + gap_px
+    )
+
+    path_end = max(
+        0,
+        usable_bottom
+    )
+
+    candidate_height_mm = (
+        (
+            n - 1
+            - candidate_index
+        )
+        / max(
+            pixels_per_mm,
+            1e-6
+        )
+    )
+
+    if (
+        candidate_height_mm
+        < BOTTOM_UP_MIN_FRONT_HEIGHT_MM
+        or
+        path_end
+        <= path_start
+    ):
+
+        return {
+            "valid":
+                False,
+
+            "score":
+                0.0,
+
+            "connected_fraction":
+                0.0,
+
+            "seed_fraction":
+                0.0,
+
+            "longest_gap_mm":
+                np.inf,
+
+            "dry_shift":
+                dry_shift,
+
+            "candidate_height_mm":
+                float(
+                    candidate_height_mm
+                )
+        }
+
+    segment_px = max(
+        2,
+        int(
+            round(
+                BOTTOM_UP_SEGMENT_MM
+                * pixels_per_mm
+            )
+        )
+    )
+
+    weak_threshold = max(
+        0.50,
+        float(
+            BOTTOM_UP_WEAK_NOISE_MULTIPLIER
+            * baseline_noise
+        )
+    )
+
+    segment_medians = []
+
+    segment_lengths = []
+
+    segment_start = int(
+        path_start
+    )
+
+    while segment_start < path_end:
+
+        segment_end = min(
+            path_end,
+            segment_start
+            + segment_px
+        )
+
+        values = residual[
+            segment_start:
+            segment_end
+        ]
+
+        if len(
+            values
+        ) == 0:
+            break
+
+        segment_medians.append(
+            float(
+                np.median(
+                    values
+                )
+            )
+        )
+
+        segment_lengths.append(
+            int(
+                segment_end
+                - segment_start
+            )
+        )
+
+        segment_start = (
+            segment_end
+        )
+
+    if not segment_medians:
+
+        return {
+            "valid":
+                False,
+
+            "score":
+                0.0,
+
+            "connected_fraction":
+                0.0,
+
+            "seed_fraction":
+                0.0,
+
+            "longest_gap_mm":
+                np.inf,
+
+            "dry_shift":
+                dry_shift,
+
+            "candidate_height_mm":
+                float(
+                    candidate_height_mm
+                )
+        }
+
+    segment_medians = np.asarray(
+        segment_medians,
+        dtype=np.float64
+    )
+
+    changed = (
+        np.abs(
+            segment_medians
+        )
+        >= weak_threshold
+    )
+
+    connected_fraction = float(
+        np.mean(
+            changed
+        )
+    )
+
+    seed_segment_count = max(
+        1,
+        int(
+            np.ceil(
+                BOTTOM_UP_SEED_DEPTH_MM
+                / max(
+                    BOTTOM_UP_SEGMENT_MM,
+                    1e-6
+                )
+            )
+        )
+    )
+
+    seed_segment_count = min(
+        seed_segment_count,
+        len(
+            changed
+        )
+    )
+
+    seed_fraction = float(
+        np.mean(
+            changed[
+                -seed_segment_count:
+            ]
+        )
+    )
+
+    # Longest run of unchanged segments inside candidate->bottom
+    # path. A true bottom-connected region can contain small
+    # reflective gaps, but not a long dry interval.
+    longest_gap_segments = 0
+
+    current_gap_segments = 0
+
+    for is_changed in changed:
+
+        if is_changed:
+
+            current_gap_segments = 0
+
+        else:
+
+            current_gap_segments += 1
+
+            longest_gap_segments = max(
+                longest_gap_segments,
+                current_gap_segments
+            )
+
+    longest_gap_mm = float(
+        longest_gap_segments
+        * BOTTOM_UP_SEGMENT_MM
+    )
+
+    valid = (
+        seed_fraction
+        >= BOTTOM_UP_MIN_SEED_CHANGED_FRACTION
+        and
+        connected_fraction
+        >= BOTTOM_UP_MIN_CONNECTED_FRACTION
+        and
+        longest_gap_mm
+        <= BOTTOM_UP_MAX_GAP_MM
+    )
+
+    gap_score = max(
+        0.0,
+        1.0
+        - (
+            longest_gap_mm
+            / max(
+                BOTTOM_UP_MAX_GAP_MM,
+                1e-6
+            )
+        )
+    )
+
+    score = float(
+        0.50
+        * connected_fraction
+        +
+        0.30
+        * seed_fraction
+        +
+        0.20
+        * gap_score
+    )
+
+    return {
+        "valid":
+            bool(
+                valid
+            ),
+
+        "score":
+            score,
+
+        "connected_fraction":
+            connected_fraction,
+
+        "seed_fraction":
+            seed_fraction,
+
+        "longest_gap_mm":
+            longest_gap_mm,
+
+        "dry_shift":
+            dry_shift,
+
+        "candidate_height_mm":
+            float(
+                candidate_height_mm
             )
     }
 
@@ -6607,29 +7855,32 @@ def detect_liquid_front(
     front_geometry,
     baseline_profile,
     baseline_noise,
-    pixels_per_mm
+    pixels_per_mm,
+    current_time_s=None,
+    onset_search_active=False,
+    previous_onset_height_mm=None
 ):
     """
-    Hybrid front detector.
+    Multi-evidence liquid-front detector.
 
-    Stage A:
-        Compute the traditional spatial brightness-gradient
-        detector. This remains available as a diagnostic raw
-        measurement.
+    The strongest spatial edge remains the PRIMARY front candidate.
 
-    Stage B:
-        Instead of trusting only its strongest edge, inspect up
-        to FRONT_MAX_CANDIDATES spatial edge candidates.
+    It is accepted when it passes either:
+        A. original absolute-darkening validation; or
+        B. relative temporal-transition + bottom-connectivity
+           validation.
 
-    Stage C:
-        Compare every candidate against frame 0. A candidate is
-        accepted as a wetting front only when the material below
-        it has actually darkened relative to the material above.
+    Bottom-connectivity is used as a physical check that the region
+    below the spatial front is connected to the liquid side. It is
+    NOT used to replace a good moving front with a weaker optical
+    boundary close to the bottom.
 
-    This is the key change for the beginning of the experiment:
-    a static edge near the ruler zero can still have a large
-    single-frame gradient and high 'confidence', but it should
-    fail the temporal wetting test.
+    If the raw strongest edge fails both modes, alternative spatial
+    edge candidates are evaluated as fallback.
+
+    All returned heights come from actual pixels in the current
+    frame. No temporal interpolation or synthetic measurement is
+    created.
     """
 
     y_start = int(
@@ -6673,7 +7924,7 @@ def detect_liquid_front(
     )
 
     # --------------------------------------------------------
-    # Traditional strongest-edge result.
+    # Strongest actual spatial edge
     # --------------------------------------------------------
 
     raw_local_front = int(
@@ -6687,6 +7938,20 @@ def detect_liquid_front(
         + raw_local_front
     )
 
+    raw_height_from_bottom_mm = float(
+        (
+            len(
+                profile_smooth
+            )
+            - 1
+            - raw_local_front
+        )
+        / max(
+            pixels_per_mm,
+            1e-6
+        )
+    )
+
     raw_confidence_score = float(
         (
             edge_strength[
@@ -6698,15 +7963,22 @@ def detect_liquid_front(
         robust_scale
     )
 
-    # Preserve temporal evidence for the actual strongest edge,
-    # even when it fails the normal wetting threshold. This is
-    # used only for retrospective onset review.
     raw_wetting = evaluate_wetting_candidate(
         raw_local_front,
         profile_smooth,
         baseline_profile,
         pixels_per_mm,
         baseline_noise
+    )
+
+    raw_bottom_connection = (
+        evaluate_bottom_connection(
+            raw_local_front,
+            profile_smooth,
+            baseline_profile,
+            pixels_per_mm,
+            baseline_noise
+        )
     )
 
     raw_wetting_step = float(
@@ -6723,12 +7995,30 @@ def detect_liquid_front(
 
     raw_wetting_valid = bool(
         raw_wetting[
+            "absolute_valid"
+        ]
+    )
+
+    raw_relative_valid = bool(
+        raw_wetting[
+            "relative_valid"
+        ]
+    )
+
+    raw_bottom_connected = bool(
+        raw_bottom_connection[
             "valid"
         ]
     )
 
+    raw_bottom_relative_valid = bool(
+        raw_relative_valid
+        and
+        raw_bottom_connected
+    )
+
     # --------------------------------------------------------
-    # Generate several possible spatial edges.
+    # Generate alternative ACTUAL spatial candidates.
     # --------------------------------------------------------
 
     minimum_peak_strength = (
@@ -6779,9 +8069,19 @@ def detect_liquid_front(
         reverse=True
     )
 
+    early_onset_mode = bool(
+        onset_search_active
+    )
+
+    candidate_limit = (
+        EARLY_ONSET_MAX_CANDIDATES
+        if early_onset_mode
+        else FRONT_MAX_CANDIDATES
+    )
+
     candidate_indices = (
         candidate_indices[
-            :FRONT_MAX_CANDIDATES
+            :candidate_limit
         ]
     )
 
@@ -6814,19 +8114,70 @@ def detect_liquid_front(
             baseline_noise
         )
 
-        if not wetting[
-            "valid"
-        ]:
+        bottom = evaluate_bottom_connection(
+            local_index,
+            profile_smooth,
+            baseline_profile,
+            pixels_per_mm,
+            baseline_noise
+        )
+
+        absolute_valid = bool(
+            wetting[
+                "absolute_valid"
+            ]
+        )
+
+        bottom_relative_valid = bool(
+            wetting[
+                "relative_valid"
+            ]
+            and
+            bottom[
+                "valid"
+            ]
+        )
+
+        if (
+            not absolute_valid
+            and
+            not bottom_relative_valid
+        ):
             continue
 
-        # Combined ranking:
-        # temporal wetting evidence dominates; spatial edge
-        # confidence provides a smaller tie-break contribution.
+        if (
+            absolute_valid
+            and
+            bottom_relative_valid
+        ):
+
+            validation_mode = (
+                "absolute+bottom_connected"
+            )
+
+        elif bottom_relative_valid:
+
+            validation_mode = (
+                "bottom_connected_relative"
+            )
+
+        else:
+
+            validation_mode = (
+                "absolute_darkening"
+            )
+
         combined_score = float(
             wetting[
+                "relative_score"
+            ]
+            +
+            0.75
+            * bottom[
                 "score"
             ]
-            + 0.15
+            +
+            0.15
             * max(
                 0.0,
                 edge_score
@@ -6856,32 +8207,379 @@ def detect_liquid_front(
                         ]
                     ),
 
+                "absolute_wetting_step":
+                    float(
+                        wetting[
+                            "absolute_step"
+                        ]
+                    ),
+
                 "wetting_score":
                     float(
                         wetting[
+                            "relative_score"
+                        ]
+                    ),
+
+                "absolute_valid":
+                    absolute_valid,
+
+                "bottom_relative_valid":
+                    bottom_relative_valid,
+
+                "bottom_score":
+                    float(
+                        bottom[
                             "score"
                         ]
                     ),
+
+                "bottom_connected_fraction":
+                    float(
+                        bottom[
+                            "connected_fraction"
+                        ]
+                    ),
+
+                "bottom_seed_fraction":
+                    float(
+                        bottom[
+                            "seed_fraction"
+                        ]
+                    ),
+
+                "bottom_longest_gap_mm":
+                    float(
+                        bottom[
+                            "longest_gap_mm"
+                        ]
+                    ),
+
+                "candidate_height_from_bottom_mm":
+                    float(
+                        bottom[
+                            "candidate_height_mm"
+                        ]
+                    ),
+
+                "validation_mode":
+                    validation_mode,
 
                 "combined_score":
                     combined_score
             }
         )
 
-    if evaluated:
+    # --------------------------------------------------------
+    # EARLY-ONSET RULE
+    # --------------------------------------------------------
+    #
+    # In the first second, do NOT blindly use the strongest edge.
+    #
+    # A low meniscus/reflection edge can remain stronger than the
+    # actual wetting front. Instead:
+    #
+    #   1. enforce the physical 0-5 mm onset band;
+    #   2. require bottom-connected relative wetting evidence;
+    #   3. among credible candidates, choose the UPPERMOST actual
+    #      spatial boundary inside that band.
+    #
+    # This is still a measured edge in the actual frame; no height
+    # is interpolated or reconstructed.
+    # --------------------------------------------------------
 
-        best = max(
-            evaluated,
-            key=lambda item:
-            (
+    early_onset_selected = False
+
+    if early_onset_mode:
+
+        if (
+            current_time_s is not None
+            and
+            float(
+                current_time_s
+            )
+            <= EARLY_ONSET_HARD_LIMIT_TIME_S
+        ):
+
+            onset_max_height = (
+                EARLY_ONSET_HARD_MAX_HEIGHT_MM
+            )
+
+        else:
+
+            onset_max_height = (
+                EARLY_ONSET_RELEASE_SEARCH_MAX_HEIGHT_MM
+            )
+
+        early_candidates = [
+            item
+            for item
+            in evaluated
+
+            if (
+                item[
+                    "bottom_relative_valid"
+                ]
+                and
+                item[
+                    "candidate_height_from_bottom_mm"
+                ]
+                >= EARLY_ONSET_MIN_HEIGHT_MM
+                and
+                item[
+                    "candidate_height_from_bottom_mm"
+                ]
+                <= onset_max_height
+            )
+        ]
+
+        # Once the upper wetting branch has been established, do
+        # not fall back to a much lower meniscus/reflection branch.
+        if (
+            previous_onset_height_mm is not None
+            and
+            np.isfinite(
+                float(
+                    previous_onset_height_mm
+                )
+            )
+        ):
+
+            minimum_continuous_height = (
+                float(
+                    previous_onset_height_mm
+                )
+                - EARLY_ONSET_MAX_RETREAT_MM
+            )
+
+            continuous_candidates = [
+                item
+                for item
+                in early_candidates
+                if (
+                    item[
+                        "candidate_height_from_bottom_mm"
+                    ]
+                    >= minimum_continuous_height
+                )
+            ]
+
+            if continuous_candidates:
+
+                early_candidates = (
+                    continuous_candidates
+                )
+
+            else:
+
+                # No actual candidate continues the established
+                # branch in this frame. Leave it unresolved rather
+                # than switching to the low optical feature.
+                early_candidates = []
+
+        if early_candidates:
+
+            best_early_score = max(
                 item[
                     "combined_score"
-                ],
-                item[
-                    "edge_score"
+                ]
+                for item
+                in early_candidates
+            )
+
+            credible_early_candidates = [
+                item
+                for item
+                in early_candidates
+
+                if (
+                    item[
+                        "combined_score"
+                    ]
+                    >= (
+                        EARLY_ONSET_MIN_SCORE_FRACTION
+                        * best_early_score
+                    )
+                )
+            ]
+
+            # The actual wetting front is the upper boundary of the
+            # bottom-connected changed region. Choose the uppermost
+            # credible ACTUAL spatial edge in the allowed onset
+            # band, while continuity prevents a return to the
+            # meniscus branch.
+            best = max(
+                credible_early_candidates,
+                key=lambda item:
+                (
+                    item[
+                        "candidate_height_from_bottom_mm"
+                    ],
+                    item[
+                        "combined_score"
+                    ],
+                    item[
+                        "edge_score"
+                    ]
+                )
+            )
+
+            bottom_up_y = float(
+                best[
+                    "global_y"
                 ]
             )
-        )
+
+            bottom_up_score = float(
+                best[
+                    "bottom_score"
+                ]
+            )
+
+            early_onset_selected = True
+
+        else:
+
+            best = None
+
+            bottom_up_y = np.nan
+
+            bottom_up_score = 0.0
+
+    else:
+
+        # ----------------------------------------------------
+        # NORMAL RAW-PRIMARY RULE
+        # ----------------------------------------------------
+
+        raw_best = None
+
+        for item in evaluated:
+
+            if (
+                item[
+                    "local_index"
+                ]
+                == raw_local_front
+            ):
+
+                raw_best = item
+                break
+
+        if (
+            raw_best is not None
+            and
+            (
+                raw_best[
+                    "absolute_valid"
+                ]
+                or
+                raw_best[
+                    "bottom_relative_valid"
+                ]
+            )
+        ):
+
+            best = raw_best
+
+            if raw_best[
+                "bottom_relative_valid"
+            ]:
+
+                bottom_up_y = float(
+                    raw_best[
+                        "global_y"
+                    ]
+                )
+
+                bottom_up_score = float(
+                    raw_best[
+                        "bottom_score"
+                    ]
+                )
+
+            else:
+
+                bottom_up_y = np.nan
+
+                bottom_up_score = 0.0
+
+        else:
+
+            # ------------------------------------------------
+            # FALLBACK:
+            # strongest physically supported alternative edge.
+            # ------------------------------------------------
+
+            if evaluated:
+
+                best_score = max(
+                    item[
+                        "combined_score"
+                    ]
+                    for item
+                    in evaluated
+                )
+
+                eligible = [
+                    item
+                    for item
+                    in evaluated
+                    if (
+                        item[
+                            "combined_score"
+                        ]
+                        >= (
+                            RAW_PRIMARY_FALLBACK_SCORE_FRACTION
+                            * best_score
+                        )
+                    )
+                ]
+
+                best = max(
+                    eligible,
+                    key=lambda item:
+                    (
+                        item[
+                            "combined_score"
+                        ],
+                        item[
+                            "edge_score"
+                        ]
+                    )
+                )
+
+                if best[
+                    "bottom_relative_valid"
+                ]:
+
+                    bottom_up_y = float(
+                        best[
+                            "global_y"
+                        ]
+                    )
+
+                    bottom_up_score = float(
+                        best[
+                            "bottom_score"
+                        ]
+                    )
+
+                else:
+
+                    bottom_up_y = np.nan
+
+                    bottom_up_score = 0.0
+
+            else:
+
+                best = None
+
+                bottom_up_y = np.nan
+
+                bottom_up_score = 0.0
+
+    if best is not None:
 
         validated_y = float(
             best[
@@ -6909,6 +8607,30 @@ def detect_liquid_front(
 
         wetting_detected = True
 
+        validation_mode = str(
+            best[
+                "validation_mode"
+            ]
+        )
+
+        bottom_connected_fraction = float(
+            best[
+                "bottom_connected_fraction"
+            ]
+        )
+
+        bottom_seed_fraction = float(
+            best[
+                "bottom_seed_fraction"
+            ]
+        )
+
+        bottom_longest_gap_mm = float(
+            best[
+                "bottom_longest_gap_mm"
+            ]
+        )
+
     else:
 
         validated_y = np.nan
@@ -6921,6 +8643,14 @@ def detect_liquid_front(
 
         wetting_detected = False
 
+        validation_mode = "none"
+
+        bottom_connected_fraction = 0.0
+
+        bottom_seed_fraction = 0.0
+
+        bottom_longest_gap_mm = np.nan
+
     return {
         "raw_y":
             float(
@@ -6930,6 +8660,11 @@ def detect_liquid_front(
         "raw_confidence_score":
             float(
                 raw_confidence_score
+            ),
+
+        "raw_height_from_bottom_mm":
+            float(
+                raw_height_from_bottom_mm
             ),
 
         "raw_wetting_step_L":
@@ -6945,6 +8680,16 @@ def detect_liquid_front(
         "raw_wetting_valid":
             bool(
                 raw_wetting_valid
+            ),
+
+        "raw_relative_valid":
+            bool(
+                raw_relative_valid
+            ),
+
+        "raw_bottom_connected":
+            bool(
+                raw_bottom_connected
             ),
 
         "validated_y":
@@ -6972,18 +8717,73 @@ def detect_liquid_front(
                 wetting_detected
             ),
 
+        "validation_mode":
+            validation_mode,
+
+        "bottom_up_y":
+            float(
+                bottom_up_y
+            ),
+
+        "bottom_up_score":
+            float(
+                bottom_up_score
+            ),
+
+        "bottom_connected_fraction":
+            float(
+                bottom_connected_fraction
+            ),
+
+        "bottom_seed_fraction":
+            float(
+                bottom_seed_fraction
+            ),
+
+        "bottom_longest_gap_mm":
+            float(
+                bottom_longest_gap_mm
+            ),
+
         "candidate_count":
             int(
                 len(
                     candidate_indices
                 )
+            ),
+
+        "early_onset_mode":
+            bool(
+                early_onset_mode
+            ),
+
+        "early_onset_selected":
+            bool(
+                early_onset_selected
+            ),
+
+        "selected_candidate_height_from_bottom_mm":
+            (
+                float(
+                    best[
+                        "candidate_height_from_bottom_mm"
+                    ]
+                )
+                if (
+                    best is not None
+                    and
+                    np.isfinite(
+                        float(
+                            best[
+                                "candidate_height_from_bottom_mm"
+                            ]
+                        )
+                    )
+                )
+                else np.nan
             )
     }
 
-
-# ============================================================
-# DRAW STATIC GEOMETRY
-# ============================================================
 
 def draw_static_geometry(
     image,
@@ -7424,18 +9224,29 @@ def save_video_csv(
                 "time_s",
                 "front_y_raw_px",
                 "front_y_validated_px",
+                "front_y_bottom_up_px",
                 "front_y_smoothed_px",
                 "front_y_tracking_anchor_px",
                 "front_y_final_measured_px",
                 "height_raw_mm",
                 "height_validated_mm",
+                "height_bottom_up_mm",
                 "height_smoothed_mm",
                 "height_tracking_anchor_mm",
                 "height_final_measured_mm",
+                "height_final_measured_pre_spike_filter_mm",
+                "transient_spike_rejected",
                 "final_measurement_source",
                 "wetting_detected",
+                "validation_mode",
+                "early_onset_mode",
+                "early_onset_selected",
                 "wetting_step_L",
                 "wetting_score",
+                "bottom_up_score",
+                "bottom_connected_fraction",
+                "bottom_seed_fraction",
+                "bottom_longest_gap_mm",
                 "front_candidate_count",
                 "tracking_anchor",
                 "nearest_ruler_mm",
@@ -7446,6 +9257,8 @@ def save_video_csv(
                 "raw_wetting_step_L",
                 "raw_wetting_score",
                 "raw_wetting_valid",
+                "raw_relative_valid",
+                "raw_bottom_connected",
                 "tracking_type"
             ]
         )
@@ -7467,6 +9280,16 @@ def save_video_csv(
                         if np.isfinite(
                             row[
                                 "front_y_validated"
+                            ]
+                        )
+                        else ""
+                    ),
+
+                    (
+                        f"{row['front_y_bottom_up']:.3f}"
+                        if np.isfinite(
+                            row[
+                                "front_y_bottom_up"
                             ]
                         )
                         else ""
@@ -7506,6 +9329,16 @@ def save_video_csv(
                         else ""
                     ),
 
+                    (
+                        f"{row['height_bottom_up_mm']:.6f}"
+                        if np.isfinite(
+                            row[
+                                "height_bottom_up_mm"
+                            ]
+                        )
+                        else ""
+                    ),
+
                     f"{row['height_smoothed_mm']:.6f}",
 
                     (
@@ -7528,6 +9361,22 @@ def save_video_csv(
                         else ""
                     ),
 
+                    (
+                        f"{row['height_final_measured_pre_spike_filter_mm']:.6f}"
+                        if np.isfinite(
+                            row[
+                                "height_final_measured_pre_spike_filter_mm"
+                            ]
+                        )
+                        else ""
+                    ),
+
+                    int(
+                        row[
+                            "transient_spike_rejected"
+                        ]
+                    ),
+
                     row[
                         "final_measurement_source"
                     ],
@@ -7538,9 +9387,41 @@ def save_video_csv(
                         ]
                     ),
 
+                    row[
+                        "validation_mode"
+                    ],
+
+                    int(
+                        row[
+                            "early_onset_mode"
+                        ]
+                    ),
+
+                    int(
+                        row[
+                            "early_onset_selected"
+                        ]
+                    ),
+
                     f"{row['wetting_step_L']:.6f}",
 
                     f"{row['wetting_score']:.6f}",
+
+                    f"{row['bottom_up_score']:.6f}",
+
+                    f"{row['bottom_connected_fraction']:.6f}",
+
+                    f"{row['bottom_seed_fraction']:.6f}",
+
+                    (
+                        f"{row['bottom_longest_gap_mm']:.6f}"
+                        if np.isfinite(
+                            row[
+                                "bottom_longest_gap_mm"
+                            ]
+                        )
+                        else ""
+                    ),
 
                     row[
                         "candidate_count"
@@ -7580,12 +9461,23 @@ def save_video_csv(
                         ]
                     ),
 
+                    int(
+                        row[
+                            "raw_relative_valid"
+                        ]
+                    ),
+
+                    int(
+                        row[
+                            "raw_bottom_connected"
+                        ]
+                    ),
+
                     row[
                         "tracking_type"
                     ]
                 ]
             )
-
 
 
 def save_individual_plot(
@@ -7610,6 +9502,17 @@ def save_individual_plot(
         [
             row[
                 "height_raw_mm"
+            ]
+            for row
+            in results
+        ],
+        dtype=np.float64
+    )
+
+    bottom_up = np.asarray(
+        [
+            row[
+                "height_bottom_up_mm"
             ]
             for row
             in results
@@ -7650,6 +9553,28 @@ def save_individual_plot(
         dtype=np.float64
     )
 
+    pre_spike = np.asarray(
+        [
+            row[
+                "height_final_measured_pre_spike_filter_mm"
+            ]
+            for row
+            in results
+        ],
+        dtype=np.float64
+    )
+
+    spike_rejected = np.asarray(
+        [
+            row[
+                "transient_spike_rejected"
+            ]
+            for row
+            in results
+        ],
+        dtype=bool
+    )
+
     fig, ax = plt.subplots(
         figsize=(
             9,
@@ -7666,52 +9591,110 @@ def save_individual_plot(
         label="Raw strongest edge"
     )
 
+    bottom_mask = np.isfinite(
+        bottom_up
+    )
+
+    if np.any(
+        bottom_mask
+    ):
+
+        ax.scatter(
+            times[
+                bottom_mask
+            ],
+            bottom_up[
+                bottom_mask
+            ],
+            s=7,
+            alpha=0.30,
+            marker="x",
+            label="Bottom-connected validation candidate"
+        )
+
     validated_mask = np.isfinite(
         validated
     )
 
-    ax.scatter(
-        times[
-            validated_mask
-        ],
-        validated[
-            validated_mask
-        ],
-        s=5,
-        alpha=0.20,
-        label="Temporally validated actual measurements"
-    )
+    if np.any(
+        validated_mask
+    ):
+
+        ax.scatter(
+            times[
+                validated_mask
+            ],
+            validated[
+                validated_mask
+            ],
+            s=7,
+            alpha=0.35,
+            label="Validated actual measurements"
+        )
 
     final_mask = np.isfinite(
         final_measured
     )
 
-    ax.scatter(
-        times[
-            final_mask
-        ],
-        final_measured[
-            final_mask
-        ],
-        s=8,
-        alpha=0.85,
-        label="Final actual measured series"
+    if np.any(
+        final_mask
+    ):
+
+        ax.scatter(
+            times[
+                final_mask
+            ],
+            final_measured[
+                final_mask
+            ],
+            s=9,
+            alpha=0.85,
+            label="Final actual measured series"
+        )
+
+    rejected_mask = (
+        spike_rejected
+        &
+        np.isfinite(
+            pre_spike
+        )
     )
+
+    if np.any(
+        rejected_mask
+    ):
+
+        ax.scatter(
+            times[
+                rejected_mask
+            ],
+            pre_spike[
+                rejected_mask
+            ],
+            s=28,
+            marker="x",
+            alpha=0.70,
+            label="Rejected transient outlier"
+        )
 
     anchor_mask = np.isfinite(
         anchors
     )
 
-    ax.scatter(
-        times[
-            anchor_mask
-        ],
-        anchors[
-            anchor_mask
-        ],
-        s=24,
-        label="Confirmation / review anchors"
-    )
+    if np.any(
+        anchor_mask
+    ):
+
+        ax.scatter(
+            times[
+                anchor_mask
+            ],
+            anchors[
+                anchor_mask
+            ],
+            s=24,
+            label="Confirmation / review anchors"
+        )
 
     ax.set_xlabel(
         "Time [s]"
@@ -7742,7 +9725,6 @@ def save_individual_plot(
     plt.close(
         fig
     )
-
 
 
 def save_onset_diagnostic_plot(
@@ -7777,6 +9759,17 @@ def save_onset_diagnostic_plot(
         dtype=np.float64
     )
 
+    bottom_up = np.asarray(
+        [
+            row[
+                "height_bottom_up_mm"
+            ]
+            for row
+            in results
+        ],
+        dtype=np.float64
+    )
+
     validated = np.asarray(
         [
             row[
@@ -7810,6 +9803,28 @@ def save_onset_diagnostic_plot(
         dtype=np.float64
     )
 
+    pre_spike = np.asarray(
+        [
+            row[
+                "height_final_measured_pre_spike_filter_mm"
+            ]
+            for row
+            in results
+        ],
+        dtype=np.float64
+    )
+
+    spike_rejected = np.asarray(
+        [
+            row[
+                "transient_spike_rejected"
+            ]
+            for row
+            in results
+        ],
+        dtype=bool
+    )
+
     time_mask = (
         times
         <= min(
@@ -7841,6 +9856,31 @@ def save_onset_diagnostic_plot(
         label="Strongest spatial edge"
     )
 
+    bottom_mask = (
+        time_mask
+        &
+        np.isfinite(
+            bottom_up
+        )
+    )
+
+    if np.any(
+        bottom_mask
+    ):
+
+        ax.scatter(
+            times[
+                bottom_mask
+            ],
+            bottom_up[
+                bottom_mask
+            ],
+            s=20,
+            alpha=0.35,
+            marker="x",
+            label="Bottom-connected validation candidate"
+        )
+
     validated_mask = (
         time_mask
         &
@@ -7849,17 +9889,21 @@ def save_onset_diagnostic_plot(
         )
     )
 
-    ax.scatter(
-        times[
-            validated_mask
-        ],
-        validated[
-            validated_mask
-        ],
-        s=16,
-        alpha=0.30,
-        label="Temporal wetting validation"
-    )
+    if np.any(
+        validated_mask
+    ):
+
+        ax.scatter(
+            times[
+                validated_mask
+            ],
+            validated[
+                validated_mask
+            ],
+            s=18,
+            alpha=0.35,
+            label="Validated actual measurement"
+        )
 
     final_mask = (
         time_mask
@@ -7869,16 +9913,47 @@ def save_onset_diagnostic_plot(
         )
     )
 
-    ax.scatter(
-        times[
-            final_mask
-        ],
-        final_measured[
-            final_mask
-        ],
-        s=26,
-        label="Final actual measured series"
+    if np.any(
+        final_mask
+    ):
+
+        ax.scatter(
+            times[
+                final_mask
+            ],
+            final_measured[
+                final_mask
+            ],
+            s=26,
+            label="Final actual measured series"
+        )
+
+    rejected_mask = (
+        time_mask
+        &
+        spike_rejected
+        &
+        np.isfinite(
+            pre_spike
+        )
     )
+
+    if np.any(
+        rejected_mask
+    ):
+
+        ax.scatter(
+            times[
+                rejected_mask
+            ],
+            pre_spike[
+                rejected_mask
+            ],
+            s=32,
+            marker="x",
+            alpha=0.70,
+            label="Rejected transient outlier"
+        )
 
     anchor_mask = (
         time_mask
@@ -7888,15 +9963,33 @@ def save_onset_diagnostic_plot(
         )
     )
 
-    ax.scatter(
-        times[
-            anchor_mask
-        ],
-        anchors[
-            anchor_mask
-        ],
-        s=48,
-        label="Confirmation / review anchors"
+    if np.any(
+        anchor_mask
+    ):
+
+        ax.scatter(
+            times[
+                anchor_mask
+            ],
+            anchors[
+                anchor_mask
+            ],
+            s=48,
+            label="Confirmation / review anchors"
+        )
+
+    ax.axvline(
+        EARLY_ONSET_HARD_LIMIT_TIME_S,
+        linewidth=0.8,
+        linestyle="--",
+        alpha=0.35
+    )
+
+    ax.axhline(
+        EARLY_ONSET_HARD_MAX_HEIGHT_MM,
+        linewidth=0.8,
+        linestyle="--",
+        alpha=0.35
     )
 
     ax.set_xlabel(
@@ -7928,7 +10021,6 @@ def save_onset_diagnostic_plot(
     plt.close(
         fig
     )
-
 
 
 def calculate_folder_average(
@@ -8560,6 +10652,19 @@ def save_all_folder_averages_plot(
     root_name,
     folder_averages
 ):
+    """
+    Plot the average trajectory of each experiment folder.
+
+    Visual rules:
+        - automatic different colours for different folders;
+        - different marker shapes;
+        - thin lines;
+        - small, sparse markers rather than large points;
+        - no temporal interpolation is introduced here.
+
+    Each plotted point comes directly from the already calculated
+    folder-average series.
+    """
 
     if not folder_averages:
         return
@@ -8571,19 +10676,71 @@ def save_all_folder_averages_plot(
         )
     )
 
-    for (
+    marker_cycle = [
+        "o",
+        "s",
+        "^",
+        "D",
+        "v",
+        "P",
+        "X",
+        "<",
+        ">",
+        "h",
+        "p"
+    ]
+
+    for folder_index, (
         folder_name,
         average
-    ) in folder_averages.items():
+    ) in enumerate(
+        folder_averages.items()
+    ):
 
-        ax.scatter(
+        times = np.asarray(
             average[
                 "time_s"
             ],
+            dtype=np.float64
+        )
+
+        means = np.asarray(
             average[
                 "mean_mm"
             ],
-            s=12,
+            dtype=np.float64
+        )
+
+        if len(
+            times
+        ) == 0:
+            continue
+
+        # Keep the full line at full temporal resolution, but show
+        # only a modest number of small markers so the overview does
+        # not become a field of large dots.
+        marker_every = max(
+            1,
+            len(
+                times
+            )
+            // 45
+        )
+
+        ax.plot(
+            times,
+            means,
+            linestyle="-",
+            linewidth=1.0,
+            alpha=0.78,
+            marker=marker_cycle[
+                folder_index
+                % len(
+                    marker_cycle
+                )
+            ],
+            markersize=3.0,
+            markevery=marker_every,
             label=folder_name
         )
 
@@ -8604,7 +10761,9 @@ def save_all_folder_averages_plot(
         alpha=0.30
     )
 
-    ax.legend()
+    ax.legend(
+        fontsize=8
+    )
 
     fig.tight_layout()
 
@@ -8617,10 +10776,6 @@ def save_all_folder_averages_plot(
         fig
     )
 
-
-# ============================================================
-# VIDEO PROCESSING
-# ============================================================
 
 def process_video(
     video_path,
@@ -9009,7 +11164,23 @@ def process_video(
 
     raw_wetting_valid_flags = []
 
+    raw_relative_valid_flags = []
+
+    raw_bottom_connected_flags = []
+
     validated_y = []
+
+    validation_modes = []
+
+    bottom_up_y = []
+
+    bottom_up_scores = []
+
+    bottom_connected_fractions = []
+
+    bottom_seed_fractions = []
+
+    bottom_longest_gaps_mm = []
 
     validated_confidence_scores = []
 
@@ -9021,7 +11192,23 @@ def process_video(
 
     candidate_counts = []
 
+    early_onset_mode_flags = []
+
+    early_onset_selected_flags = []
+
     frame_number = 0
+
+    # Stateful onset branch.
+    #
+    # Starts active and remains active until the actual selected
+    # upper wetting boundary reaches 5 mm persistently.
+    onset_search_active = True
+
+    previous_onset_height_mm = None
+
+    onset_release_history = []
+
+    onset_release_frame = None
 
     while True:
 
@@ -9030,13 +11217,123 @@ def process_video(
         if not success:
             break
 
+        current_time_s = (
+            frame_number
+            / fps
+        )
+
         detection = detect_liquid_front(
             frame,
             front_geometry,
             baseline_profile,
             baseline_noise,
-            pixels_per_mm
+            pixels_per_mm,
+            current_time_s=current_time_s,
+            onset_search_active=onset_search_active,
+            previous_onset_height_mm=previous_onset_height_mm
         )
+
+        if (
+            onset_search_active
+            and
+            detection[
+                "early_onset_selected"
+            ]
+        ):
+
+            selected_onset_height = float(
+                detection[
+                    "selected_candidate_height_from_bottom_mm"
+                ]
+            )
+
+            if np.isfinite(
+                selected_onset_height
+            ):
+
+                previous_onset_height_mm = (
+                    selected_onset_height
+                )
+
+        if onset_search_active:
+
+            release_value = float(
+                detection[
+                    "selected_candidate_height_from_bottom_mm"
+                ]
+            )
+
+            raw_release_value = float(
+                detection[
+                    "raw_height_from_bottom_mm"
+                ]
+            )
+
+            release_agreement = (
+                np.isfinite(
+                    release_value
+                )
+                and
+                np.isfinite(
+                    raw_release_value
+                )
+                and
+                release_value
+                >= EARLY_ONSET_RELEASE_HEIGHT_MM
+                and
+                abs(
+                    raw_release_value
+                    - release_value
+                )
+                <= EARLY_ONSET_RELEASE_RAW_AGREEMENT_MM
+            )
+
+            onset_release_history.append(
+                bool(
+                    release_agreement
+                )
+            )
+
+            if (
+                len(
+                    onset_release_history
+                )
+                > EARLY_ONSET_RELEASE_WINDOW
+            ):
+
+                onset_release_history = (
+                    onset_release_history[
+                        -EARLY_ONSET_RELEASE_WINDOW:
+                    ]
+                )
+
+            release_support = int(
+                np.sum(
+                    np.asarray(
+                        onset_release_history,
+                        dtype=bool
+                    )
+                )
+            )
+
+            if (
+                current_time_s
+                > EARLY_ONSET_HARD_LIMIT_TIME_S
+                and
+                len(
+                    onset_release_history
+                )
+                >= EARLY_ONSET_RELEASE_WINDOW
+                and
+                release_support
+                >= EARLY_ONSET_RELEASE_REQUIRED
+            ):
+
+                onset_search_active = False
+
+                onset_release_frame = int(
+                    frame_number
+                )
 
         raw_y.append(
             float(
@@ -9074,6 +11371,22 @@ def process_video(
             bool(
                 detection[
                     "raw_wetting_valid"
+                ]
+            )
+        )
+
+        raw_relative_valid_flags.append(
+            bool(
+                detection[
+                    "raw_relative_valid"
+                ]
+            )
+        )
+
+        raw_bottom_connected_flags.append(
+            bool(
+                detection[
+                    "raw_bottom_connected"
                 ]
             )
         )
@@ -9122,6 +11435,70 @@ def process_video(
             int(
                 detection[
                     "candidate_count"
+                ]
+            )
+        )
+
+        early_onset_mode_flags.append(
+            bool(
+                detection[
+                    "early_onset_mode"
+                ]
+            )
+        )
+
+        early_onset_selected_flags.append(
+            bool(
+                detection[
+                    "early_onset_selected"
+                ]
+            )
+        )
+
+        validation_modes.append(
+            str(
+                detection[
+                    "validation_mode"
+                ]
+            )
+        )
+
+        bottom_up_y.append(
+            float(
+                detection[
+                    "bottom_up_y"
+                ]
+            )
+        )
+
+        bottom_up_scores.append(
+            float(
+                detection[
+                    "bottom_up_score"
+                ]
+            )
+        )
+
+        bottom_connected_fractions.append(
+            float(
+                detection[
+                    "bottom_connected_fraction"
+                ]
+            )
+        )
+
+        bottom_seed_fractions.append(
+            float(
+                detection[
+                    "bottom_seed_fraction"
+                ]
+            )
+        )
+
+        bottom_longest_gaps_mm.append(
+            float(
+                detection[
+                    "bottom_longest_gap_mm"
                 ]
             )
         )
@@ -9201,6 +11578,16 @@ def process_video(
         dtype=bool
     )
 
+    raw_relative_valid_flags = np.asarray(
+        raw_relative_valid_flags,
+        dtype=bool
+    )
+
+    raw_bottom_connected_flags = np.asarray(
+        raw_bottom_connected_flags,
+        dtype=bool
+    )
+
     validated_y = np.asarray(
         validated_y,
         dtype=np.float64
@@ -9229,6 +11616,46 @@ def process_video(
     candidate_counts = np.asarray(
         candidate_counts,
         dtype=int
+    )
+
+    early_onset_mode_flags = np.asarray(
+        early_onset_mode_flags,
+        dtype=bool
+    )
+
+    early_onset_selected_flags = np.asarray(
+        early_onset_selected_flags,
+        dtype=bool
+    )
+
+    validation_modes = np.asarray(
+        validation_modes,
+        dtype=object
+    )
+
+    bottom_up_y = np.asarray(
+        bottom_up_y,
+        dtype=np.float64
+    )
+
+    bottom_up_scores = np.asarray(
+        bottom_up_scores,
+        dtype=np.float64
+    )
+
+    bottom_connected_fractions = np.asarray(
+        bottom_connected_fractions,
+        dtype=np.float64
+    )
+
+    bottom_seed_fractions = np.asarray(
+        bottom_seed_fractions,
+        dtype=np.float64
+    )
+
+    bottom_longest_gaps_mm = np.asarray(
+        bottom_longest_gaps_mm,
+        dtype=np.float64
     )
 
     actual_frames = len(
@@ -9269,8 +11696,10 @@ def process_video(
     # ========================================================
     # TEMPORALLY VALIDATED HEIGHT
     #
-    # NaN means that no spatial edge in that frame also showed
-    # the expected dry-above / darker-wet-below temporal change.
+    # NaN means that no spatial edge in that frame passed either:
+    #   - original absolute-darkening validation, or
+    #   - relative temporal transition + bottom-connected wet-region
+    #     validation.
     # ========================================================
 
     height_validated_mm = np.asarray(
@@ -9287,6 +11716,24 @@ def process_video(
             )
             for y
             in validated_y
+        ],
+        dtype=np.float64
+    )
+
+    height_bottom_up_mm = np.asarray(
+        [
+            (
+                front_y_to_height_mm(
+                    y,
+                    scale_positions
+                )
+                if np.isfinite(
+                    y
+                )
+                else np.nan
+            )
+            for y
+            in bottom_up_y
         ],
         dtype=np.float64
     )
@@ -9359,6 +11806,108 @@ def process_video(
         )
     )
 
+    early_onset_selected_count = int(
+        np.sum(
+            early_onset_selected_flags
+        )
+    )
+
+    print(
+        f"Onset-branch selections: "
+        f"{early_onset_selected_count}"
+    )
+
+    if onset_release_frame is not None:
+
+        onset_release_time = (
+            onset_release_frame
+            / fps
+        )
+
+        print(
+            f"Onset branch released at frame "
+            f"{onset_release_frame} "
+            f"({onset_release_time:.3f} s) "
+            f"after persistent crossing of "
+            f"{EARLY_ONSET_RELEASE_HEIGHT_MM:.2f} mm."
+        )
+
+        emit_log(
+            log_callback,
+            (
+                f"Onset branch released at "
+                f"{onset_release_time:.3f} s "
+                f"after "
+                f"{EARLY_ONSET_RELEASE_REQUIRED}/"
+                f"{EARLY_ONSET_RELEASE_WINDOW} "
+                f"frames had onset >= "
+                f"{EARLY_ONSET_RELEASE_HEIGHT_MM:.2f} mm "
+                f"and raw/onset agreement within "
+                f"{EARLY_ONSET_RELEASE_RAW_AGREEMENT_MM:.2f} mm."
+            )
+        )
+
+    else:
+
+        emit_log(
+            log_callback,
+            (
+                f"Onset branch remained active through "
+                f"the analysed video."
+            )
+        )
+
+    absolute_only_count = int(
+        np.sum(
+            validation_modes
+            == "absolute_darkening"
+        )
+    )
+
+    bottom_relative_count = int(
+        np.sum(
+            validation_modes
+            == "bottom_connected_relative"
+        )
+    )
+
+    both_mode_count = int(
+        np.sum(
+            validation_modes
+            == "absolute+bottom_connected"
+        )
+    )
+
+    print(
+        "Validation modes:"
+    )
+
+    print(
+        f"  absolute darkening only: "
+        f"{absolute_only_count}"
+    )
+
+    print(
+        f"  bottom-connected relative only: "
+        f"{bottom_relative_count}"
+    )
+
+    print(
+        f"  both modes agree: "
+        f"{both_mode_count}"
+    )
+
+    emit_log(
+        log_callback,
+        (
+            f"Validation modes | "
+            f"absolute only: {absolute_only_count} | "
+            f"bottom-connected relative only: "
+            f"{bottom_relative_count} | "
+            f"both: {both_mode_count}"
+        )
+    )
+
     # ========================================================
     # TRACKED:
     # 3 OF 5 CONFIRMATION
@@ -9390,6 +11939,50 @@ def process_video(
         confirmation_records,
         height_raw_mm
     )
+
+    # Preserve the exact pre-filter actual measurement series for
+    # diagnostics. The scientific final series below only REMOVES
+    # short-lived transient outliers; it never replaces them.
+    height_final_measured_pre_spike_filter_mm = (
+        height_final_measured_mm.copy()
+    )
+
+    (
+        height_final_measured_mm,
+        transient_spike_rejected
+    ) = reject_transient_measurement_spikes(
+        height_final_measured_mm
+    )
+
+    transient_rejected_count = int(
+        np.sum(
+            transient_spike_rejected
+        )
+    )
+
+    if transient_rejected_count > 0:
+
+        print(
+            f"Transient outlier frames rejected: "
+            f"{transient_rejected_count}"
+        )
+
+        emit_log(
+            log_callback,
+            (
+                f"Transient outlier frames rejected: "
+                f"{transient_rejected_count} "
+                f"(left unresolved; no replacement values)"
+            )
+        )
+
+        for rejected_index in np.where(
+            transient_spike_rejected
+        )[0]:
+
+            final_measurement_source[
+                rejected_index
+            ] = "transient_outlier_rejected"
 
     final_measurement_mask = np.isfinite(
         height_final_measured_mm
@@ -9749,6 +12342,51 @@ def process_video(
                         wetting_detected_flags[i]
                     ),
 
+                "validation_mode":
+                    str(
+                        validation_modes[i]
+                    ),
+
+                "early_onset_mode":
+                    bool(
+                        early_onset_mode_flags[i]
+                    ),
+
+                "early_onset_selected":
+                    bool(
+                        early_onset_selected_flags[i]
+                    ),
+
+                "front_y_bottom_up":
+                    float(
+                        bottom_up_y[i]
+                    ),
+
+                "height_bottom_up_mm":
+                    float(
+                        height_bottom_up_mm[i]
+                    ),
+
+                "bottom_up_score":
+                    float(
+                        bottom_up_scores[i]
+                    ),
+
+                "bottom_connected_fraction":
+                    float(
+                        bottom_connected_fractions[i]
+                    ),
+
+                "bottom_seed_fraction":
+                    float(
+                        bottom_seed_fractions[i]
+                    ),
+
+                "bottom_longest_gap_mm":
+                    float(
+                        bottom_longest_gaps_mm[i]
+                    ),
+
                 "wetting_step_L":
                     float(
                         wetting_steps[i]
@@ -9787,6 +12425,16 @@ def process_video(
                 "height_final_measured_mm":
                     float(
                         height_final_measured_mm[i]
+                    ),
+
+                "height_final_measured_pre_spike_filter_mm":
+                    float(
+                        height_final_measured_pre_spike_filter_mm[i]
+                    ),
+
+                "transient_spike_rejected":
+                    bool(
+                        transient_spike_rejected[i]
                     ),
 
                 "front_y_final_measured":
@@ -9832,6 +12480,16 @@ def process_video(
                 "raw_wetting_valid":
                     bool(
                         raw_wetting_valid_flags[i]
+                    ),
+
+                "raw_relative_valid":
+                    bool(
+                        raw_relative_valid_flags[i]
+                    ),
+
+                "raw_bottom_connected":
+                    bool(
+                        raw_bottom_connected_flags[i]
                     ),
 
                 "tracking_type":
