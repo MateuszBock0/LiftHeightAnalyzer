@@ -1,22 +1,33 @@
+import csv
+import os
+import queue
+import sys
+import threading
+import traceback
+from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
 import cv2
 import numpy as np
-import csv
-from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
 # ============================================================
-# USER SETTINGS
+# APPLICATION / PATH SETTINGS
 # ============================================================
 
-SCRIPT_FOLDER = Path(__file__).resolve().parent
+def application_folder():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
 
-ROOT_FOLDER = (
-    SCRIPT_FOLDER
-    / "Experiments"
-)
 
+APP_FOLDER = application_folder()
+DEFAULT_EXPERIMENTS_FOLDER = APP_FOLDER / "Experiments"
 OUTPUT_ROOT_NAME = "_analysis"
 
 
@@ -80,11 +91,11 @@ TRACK_MIN_CONFIDENCE_PERCENT = 55.0
 
 
 # ============================================================
-# CONFIRMATION
+# NEW: 3-OF-5 CONFIRMATION
 # ============================================================
 
-# Examine consecutive frames.
-TRACK_CONFIRM_WINDOW = 6
+# Examine five consecutive frames.
+TRACK_CONFIRM_WINDOW = 5
 
 # At least three must support the new level.
 TRACK_CONFIRM_REQUIRED = 3
@@ -283,6 +294,20 @@ CONFIDENCE_PERCENT_SCALE = 5.0
 FIGURE_DPI = 200
 
 AVERAGE_USE_COMMON_TIME_ONLY = True
+
+
+# ============================================================
+# CALLBACK HELPERS
+# ============================================================
+
+def emit_log(callback, message):
+    if callback is not None:
+        callback(str(message))
+
+
+def emit_progress(callback, **payload):
+    if callback is not None:
+        callback(payload)
 
 
 # ============================================================
@@ -6664,10 +6689,16 @@ def save_all_folder_averages_plot(
     )
 
 
+# ============================================================
+# VIDEO PROCESSING
+# ============================================================
+
 def process_video(
     video_path,
     output_folder,
-    folder_name
+    folder_name,
+    log_callback=None,
+    progress_callback=None,
 ):
 
     video_path = Path(
@@ -6686,6 +6717,11 @@ def process_video(
     stem = video_path.stem
 
     video_name = video_path.name
+
+    emit_log(
+        log_callback,
+        f"\n{folder_name} | {video_name}"
+    )
 
     output_video = (
         output_folder
@@ -6794,9 +6830,24 @@ def process_video(
         f"{total_frames / fps:.2f} s"
     )
 
+    emit_log(
+        log_callback,
+        (
+            f"Resolution: {width} x {height} | "
+            f"FPS: {fps:.3f} | "
+            f"Frames: {total_frames} | "
+            f"Duration: {total_frames / fps:.2f} s"
+        )
+    )
+
     # ========================================================
     # STATIC GEOMETRY
     # ========================================================
+
+    emit_log(
+        log_callback,
+        "Detecting static geometry..."
+    )
 
     success, first_frame = cap.read()
 
@@ -6924,6 +6975,11 @@ def process_video(
 
     print()
     print(
+        "Pass 1/2: measuring liquid front..."
+    )
+
+    emit_log(
+        log_callback,
         "Pass 1/2: measuring liquid front..."
     )
 
@@ -7079,6 +7135,28 @@ def process_video(
         )
 
         frame_number += 1
+
+        if (
+            frame_number % 30 == 0
+            or
+            frame_number == total_frames
+        ):
+
+            emit_progress(
+                progress_callback,
+                stage="measure",
+                percent=(
+                    100.0
+                    * frame_number
+                    / max(
+                        1,
+                        total_frames
+                    )
+                ),
+                frame=frame_number,
+                total_frames=total_frames,
+                video_name=video_name,
+            )
 
         if (
             frame_number % 100 == 0
@@ -7280,6 +7358,15 @@ def process_video(
         f"{actual_frames} frame(s)"
     )
 
+    emit_log(
+        log_callback,
+        (
+            f"Temporally validated front: "
+            f"{int(np.sum(wetting_detected_flags))}/"
+            f"{actual_frames} frame(s)"
+        )
+    )
+
     # ========================================================
     # TRACKED:
     # 3 OF 5 CONFIRMATION
@@ -7320,6 +7407,15 @@ def process_video(
         f"Final actual measured points: "
         f"{int(np.sum(final_measurement_mask))}/"
         f"{actual_frames}"
+    )
+
+    emit_log(
+        log_callback,
+        (
+            f"Final actual measured points: "
+            f"{int(np.sum(final_measurement_mask))}/"
+            f"{actual_frames}"
+        )
     )
 
     print()
@@ -7399,6 +7495,18 @@ def process_video(
 
     print(
         "  temporal interpolation: DISABLED"
+    )
+
+    emit_log(
+        log_callback,
+        (
+            f"Tracking anchors: "
+            f"{int(np.sum(tracking_anchor_mask))} | "
+            f"Strong: {strong_count} | "
+            f"Reviewed: {reviewed_count} | "
+            f"Onset backtracked: {onset_reviewed_count} | "
+            f"Temporal interpolation: disabled"
+        )
     )
 
     print()
@@ -7755,6 +7863,11 @@ def process_video(
             "Pass 2/2: writing marked video..."
         )
 
+        emit_log(
+            log_callback,
+            "Pass 2/2: writing marked video..."
+        )
+
         cap.set(
             cv2.CAP_PROP_POS_FRAMES,
             0
@@ -7917,6 +8030,28 @@ def process_video(
             frame_number += 1
 
             if (
+                frame_number % 30 == 0
+                or
+                frame_number == actual_frames
+            ):
+
+                emit_progress(
+                    progress_callback,
+                    stage="write",
+                    percent=(
+                        100.0
+                        * frame_number
+                        / max(
+                            1,
+                            actual_frames
+                        )
+                    ),
+                    frame=frame_number,
+                    total_frames=actual_frames,
+                    video_name=video_name,
+                )
+
+            if (
                 frame_number % 100 == 0
                 or
                 frame_number
@@ -7985,6 +8120,11 @@ def process_video(
             f"{output_video.name}"
         )
 
+    emit_log(
+        log_callback,
+        f"Saved outputs for {video_name}"
+    )
+
     return {
         "video_name":
             video_name,
@@ -8015,15 +8155,68 @@ def process_video(
     }
 
 
+
 # ============================================================
-# PROCESS ONE EXPERIMENT FOLDER
+# BATCH PROCESSING
 # ============================================================
+
+def find_experiment_folders(
+    root_folder
+):
+    root_folder = Path(root_folder)
+
+    return sorted(
+        [
+            folder
+            for folder in root_folder.iterdir()
+            if (
+                folder.is_dir()
+                and folder.name != OUTPUT_ROOT_NAME
+            )
+        ],
+        key=lambda p:
+        p.name.lower()
+    )
+
+
+def find_videos_in_folder(
+    folder
+):
+    return sorted(
+        [
+            file
+            for file in Path(folder).iterdir()
+            if (
+                file.is_file()
+                and file.suffix.lower() == ".mp4"
+            )
+        ],
+        key=lambda p:
+        p.name.lower()
+    )
+
+
+def count_all_videos(
+    experiment_folders
+):
+    return sum(
+        len(
+            find_videos_in_folder(
+                folder
+            )
+        )
+        for folder in experiment_folders
+    )
+
 
 def process_experiment_folder(
     folder_path,
-    output_root
+    output_root,
+    video_counter,
+    total_videos,
+    log_callback=None,
+    progress_callback=None,
 ):
-
     folder_path = Path(
         folder_path
     )
@@ -8033,9 +8226,8 @@ def process_experiment_folder(
     )
 
     output_folder = (
-        output_root
-        /
-        folder_name
+        Path(output_root)
+        / folder_name
     )
 
     output_folder.mkdir(
@@ -8043,94 +8235,92 @@ def process_experiment_folder(
         exist_ok=True
     )
 
-    videos = sorted(
-        [
-            file
-            for file
-            in folder_path.iterdir()
-
-            if (
-                file.is_file()
-                and
-                file.suffix.lower()
-                == ".mp4"
-            )
-        ]
+    videos = find_videos_in_folder(
+        folder_path
     )
 
     if not videos:
-
-        print(
-            f"No MP4 files in "
-            f"{folder_name}"
+        emit_log(
+            log_callback,
+            f"No MP4 files in {folder_name}; skipped."
         )
+        return None, video_counter
 
-        return None
-
-    print()
-    print(
-        "#" * 70
-    )
-
-    print(
-        f"FOLDER: "
-        f"{folder_name}"
-    )
-
-    print(
-        f"Videos: "
-        f"{len(videos)}"
-    )
-
-    print(
-        "#" * 70
+    emit_log(
+        log_callback,
+        (
+            f"\n=== Folder: {folder_name} | "
+            f"{len(videos)} video(s) ==="
+        )
     )
 
     video_results = []
 
     for video_path in videos:
+        video_counter += 1
+
+        emit_progress(
+            progress_callback,
+            stage="video_start",
+            video_index=video_counter,
+            total_videos=total_videos,
+            folder_name=folder_name,
+            video_name=video_path.name,
+            percent=0.0,
+        )
 
         try:
-
             result = process_video(
                 video_path,
                 output_folder,
-                folder_name
+                folder_name,
+                log_callback=log_callback,
+                progress_callback=progress_callback,
             )
 
             video_results.append(
                 result
             )
 
+            emit_progress(
+                progress_callback,
+                stage="video_done",
+                video_index=video_counter,
+                total_videos=total_videos,
+                folder_name=folder_name,
+                video_name=video_path.name,
+                percent=100.0,
+            )
+
         except Exception as error:
-
-            print()
-            print(
-                "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            emit_log(
+                log_callback,
+                (
+                    f"FAILED: {folder_name} | "
+                    f"{video_path.name}\n"
+                    f"Reason: {error}"
+                )
             )
 
-            print(
-                f"FAILED: "
-                f"{folder_name} | "
-                f"{video_path.name}"
-            )
-
-            print(
-                f"Reason: "
-                f"{error}"
-            )
-
-            print(
-                "Continuing..."
-            )
-
-            print(
-                "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            emit_progress(
+                progress_callback,
+                stage="video_failed",
+                video_index=video_counter,
+                total_videos=total_videos,
+                folder_name=folder_name,
+                video_name=video_path.name,
+                percent=100.0,
             )
 
     if not video_results:
-
-        return None
+        emit_log(
+            log_callback,
+            (
+                f"No successful videos in "
+                f"{folder_name}."
+            )
+        )
+        return None, video_counter
 
     average = calculate_folder_average(
         video_results
@@ -8138,20 +8328,17 @@ def process_experiment_folder(
 
     average_csv = (
         output_folder
-        /
-        f"{folder_name}_average.csv"
+        / f"{folder_name}_average.csv"
     )
 
     average_plot = (
         output_folder
-        /
-        f"{folder_name}_average.png"
+        / f"{folder_name}_average.png"
     )
 
     comparison_plot = (
         output_folder
-        /
-        f"{folder_name}_comparison.png"
+        / f"{folder_name}_comparison.png"
     )
 
     save_folder_average_csv(
@@ -8162,52 +8349,56 @@ def process_experiment_folder(
     save_folder_average_plot(
         average_plot,
         folder_name,
-        average
+        average,
     )
 
     save_folder_comparison_plot(
         comparison_plot,
         folder_name,
         video_results,
-        average
+        average,
     )
 
-    return {
-        "folder_name":
-            folder_name,
+    emit_log(
+        log_callback,
+        (
+            f"Saved actual-measurement average and comparison "
+            f"for {folder_name}."
+        )
+    )
 
-        "average":
-            average,
+    return (
+        {
+            "folder_name": folder_name,
+            "average": average,
+            "video_results": video_results,
+        },
+        video_counter,
+    )
 
-        "video_results":
-            video_results
-    }
 
+def run_batch_analysis(
+    root_folder,
+    log_callback=None,
+    progress_callback=None,
+):
+    root_folder = Path(
+        root_folder
+    ).resolve()
 
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-
-    if not ROOT_FOLDER.exists():
-
+    if not root_folder.exists():
         raise FileNotFoundError(
-            f"Experiments folder does not exist:\n"
-            f"{ROOT_FOLDER}"
+            f"Folder does not exist:\n{root_folder}"
         )
 
-    if not ROOT_FOLDER.is_dir():
-
+    if not root_folder.is_dir():
         raise RuntimeError(
-            f"ROOT_FOLDER is not a directory:\n"
-            f"{ROOT_FOLDER}"
+            f"Selected path is not a folder:\n{root_folder}"
         )
 
     output_root = (
-        ROOT_FOLDER
-        /
-        OUTPUT_ROOT_NAME
+        root_folder
+        / OUTPUT_ROOT_NAME
     )
 
     output_root.mkdir(
@@ -8215,126 +8406,755 @@ def main():
         exist_ok=True
     )
 
-    experiment_folders = sorted(
-        [
-            folder
-            for folder
-            in ROOT_FOLDER.iterdir()
-
-            if (
-                folder.is_dir()
-                and
-                folder.name
-                != OUTPUT_ROOT_NAME
-            )
-        ]
+    experiment_folders = (
+        find_experiment_folders(
+            root_folder
+        )
     )
 
     if not experiment_folders:
-
         raise RuntimeError(
-            "No experimental subfolders found."
+            "No experiment subfolders were found.\n\n"
+            "Expected structure:\n"
+            "SelectedFolder\\Experiment_A\\video.mp4"
         )
 
-    print()
-    print(
-        "=" * 70
+    total_videos = count_all_videos(
+        experiment_folders
     )
 
-    print(
-        "CAPILLARY-RISE BATCH ANALYSIS"
+    if total_videos == 0:
+        raise RuntimeError(
+            "No MP4 files were found inside the "
+            "experiment subfolders."
+        )
+
+    emit_log(
+        log_callback,
+        f"Selected folder: {root_folder}"
     )
 
-    print(
-        "=" * 70
+    emit_log(
+        log_callback,
+        (
+            f"Experiment folders: "
+            f"{len(experiment_folders)}"
+        )
     )
 
-    print(
-        ROOT_FOLDER
+    emit_log(
+        log_callback,
+        f"Total MP4 videos: {total_videos}"
     )
 
     folder_results = []
+    video_counter = 0
 
     for folder in experiment_folders:
-
-        try:
-
-            result = process_experiment_folder(
+        result, video_counter = (
+            process_experiment_folder(
                 folder,
-                output_root
+                output_root,
+                video_counter,
+                total_videos,
+                log_callback=log_callback,
+                progress_callback=progress_callback,
             )
+        )
 
-            if result is not None:
-
-                folder_results.append(
-                    result
-                )
-
-        except Exception as error:
-
-            print()
-            print(
-                f"FAILED FOLDER: "
-                f"{folder.name}"
+        if result is not None:
+            folder_results.append(
+                result
             )
-
-            print(
-                f"Reason: "
-                f"{error}"
-            )
-
-    # ========================================================
-    # FINAL COMPARISON OF TRACKED AVERAGES
-    # ========================================================
 
     folder_averages = {
-        result[
-            "folder_name"
-        ]:
-        result[
-            "average"
-        ]
-
-        for result
-        in folder_results
+        result["folder_name"]:
+        result["average"]
+        for result in folder_results
     }
 
     if folder_averages:
-
         final_plot = (
             output_root
-            /
-            "all_folder_averages.png"
+            / "all_folder_averages.png"
         )
 
         save_all_folder_averages_plot(
             final_plot,
-            ROOT_FOLDER.name,
-            folder_averages
+            root_folder.name,
+            folder_averages,
         )
 
-    print()
-    print(
-        "=" * 70
+        emit_log(
+            log_callback,
+            (
+                "Saved final comparison: "
+                f"{final_plot.name}"
+            )
+        )
+
+    emit_progress(
+        progress_callback,
+        stage="all_done",
+        percent=100.0,
+        video_index=total_videos,
+        total_videos=total_videos,
     )
 
-    print(
-        "FINISHED"
-    )
-
-    print(
-        "=" * 70
-    )
-
-    print(
-        output_root
-    )
+    return output_root
 
 
 # ============================================================
-# RUN
+# GUI
 # ============================================================
+
+class LiftHeightAnalyzerApp:
+    def __init__(self, root):
+        self.root = root
+
+        self.root.title(
+            "Lift Height Analyzer"
+        )
+
+        self.root.geometry(
+            "900x650"
+        )
+
+        self.root.minsize(
+            760,
+            520
+        )
+
+        self.events = queue.Queue()
+        self.worker_thread = None
+        self.output_folder = None
+
+        self.folder_var = tk.StringVar()
+
+        if DEFAULT_EXPERIMENTS_FOLDER.exists():
+            self.folder_var.set(
+                str(
+                    DEFAULT_EXPERIMENTS_FOLDER
+                )
+            )
+
+        self.status_var = tk.StringVar(
+            value="Select the folder containing experiment subfolders."
+        )
+
+        self.video_var = tk.StringVar(
+            value="No analysis running."
+        )
+
+        self.build_ui()
+
+        self.root.after(
+            100,
+            self.poll_events
+        )
+
+    def build_ui(self):
+        main = ttk.Frame(
+            self.root,
+            padding=16
+        )
+
+        main.pack(
+            fill="both",
+            expand=True
+        )
+
+        title = ttk.Label(
+            main,
+            text="Lift Height Analyzer",
+            font=(
+                "Segoe UI",
+                18,
+                "bold"
+            ),
+        )
+
+        title.pack(
+            anchor="w",
+            pady=(0, 8)
+        )
+
+        description = ttk.Label(
+            main,
+            text=(
+                "Select the folder that contains your experiment folders. "
+                "Each experiment folder should contain one or more MP4 files."
+            ),
+            wraplength=820,
+        )
+
+        description.pack(
+            anchor="w",
+            pady=(0, 14)
+        )
+
+        folder_frame = ttk.LabelFrame(
+            main,
+            text="Experiments folder",
+            padding=10,
+        )
+
+        folder_frame.pack(
+            fill="x"
+        )
+
+        folder_entry = ttk.Entry(
+            folder_frame,
+            textvariable=self.folder_var,
+        )
+
+        folder_entry.pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=(0, 8)
+        )
+
+        self.select_button = ttk.Button(
+            folder_frame,
+            text="Select folder...",
+            command=self.select_folder,
+        )
+
+        self.select_button.pack(
+            side="right"
+        )
+
+        button_frame = ttk.Frame(
+            main
+        )
+
+        button_frame.pack(
+            fill="x",
+            pady=(12, 8)
+        )
+
+        self.start_button = ttk.Button(
+            button_frame,
+            text="Start analysis",
+            command=self.start_analysis,
+        )
+
+        self.start_button.pack(
+            side="left"
+        )
+
+        self.open_button = ttk.Button(
+            button_frame,
+            text="Open results folder",
+            command=self.open_results,
+            state="disabled",
+        )
+
+        self.open_button.pack(
+            side="left",
+            padx=(8, 0)
+        )
+
+        progress_frame = ttk.LabelFrame(
+            main,
+            text="Progress",
+            padding=10,
+        )
+
+        progress_frame.pack(
+            fill="x",
+            pady=(6, 8)
+        )
+
+        ttk.Label(
+            progress_frame,
+            textvariable=self.video_var,
+        ).pack(
+            anchor="w",
+            pady=(0, 4)
+        )
+
+        self.current_progress = ttk.Progressbar(
+            progress_frame,
+            orient="horizontal",
+            mode="determinate",
+            maximum=100.0,
+        )
+
+        self.current_progress.pack(
+            fill="x",
+            pady=(0, 8)
+        )
+
+        ttk.Label(
+            progress_frame,
+            text="Overall videos",
+        ).pack(
+            anchor="w"
+        )
+
+        self.overall_progress = ttk.Progressbar(
+            progress_frame,
+            orient="horizontal",
+            mode="determinate",
+            maximum=100.0,
+        )
+
+        self.overall_progress.pack(
+            fill="x",
+            pady=(4, 0)
+        )
+
+        ttk.Label(
+            main,
+            textvariable=self.status_var,
+        ).pack(
+            anchor="w",
+            pady=(4, 6)
+        )
+
+        log_frame = ttk.LabelFrame(
+            main,
+            text="Analysis log",
+            padding=8,
+        )
+
+        log_frame.pack(
+            fill="both",
+            expand=True
+        )
+
+        self.log_text = tk.Text(
+            log_frame,
+            wrap="word",
+            height=16,
+            state="disabled",
+        )
+
+        scrollbar = ttk.Scrollbar(
+            log_frame,
+            orient="vertical",
+            command=self.log_text.yview,
+        )
+
+        self.log_text.configure(
+            yscrollcommand=scrollbar.set
+        )
+
+        self.log_text.pack(
+            side="left",
+            fill="both",
+            expand=True
+        )
+
+        scrollbar.pack(
+            side="right",
+            fill="y"
+        )
+
+    def select_folder(self):
+        initial = (
+            self.folder_var.get()
+            if self.folder_var.get()
+            else str(APP_FOLDER)
+        )
+
+        selected = filedialog.askdirectory(
+            parent=self.root,
+            title=(
+                "Select folder containing experiment subfolders"
+            ),
+            initialdir=initial,
+        )
+
+        if selected:
+            self.folder_var.set(
+                selected
+            )
+            self.status_var.set(
+                "Ready to analyse."
+            )
+
+    def append_log(self, message):
+        self.log_text.configure(
+            state="normal"
+        )
+
+        self.log_text.insert(
+            "end",
+            str(message) + "\n"
+        )
+
+        self.log_text.see(
+            "end"
+        )
+
+        self.log_text.configure(
+            state="disabled"
+        )
+
+    def start_analysis(self):
+        if (
+            self.worker_thread is not None
+            and self.worker_thread.is_alive()
+        ):
+            return
+
+        folder_text = (
+            self.folder_var.get().strip()
+        )
+
+        if not folder_text:
+            messagebox.showerror(
+                "No folder selected",
+                "Please select the experiments folder first.",
+                parent=self.root,
+            )
+            return
+
+        folder = Path(folder_text)
+
+        if not folder.exists():
+            messagebox.showerror(
+                "Folder not found",
+                (
+                    "The selected folder does not exist:\n\n"
+                    f"{folder}"
+                ),
+                parent=self.root,
+            )
+            return
+
+        self.start_button.configure(
+            state="disabled"
+        )
+
+        self.select_button.configure(
+            state="disabled"
+        )
+
+        self.open_button.configure(
+            state="disabled"
+        )
+
+        self.current_progress["value"] = 0
+        self.overall_progress["value"] = 0
+
+        self.status_var.set(
+            "Analysis running..."
+        )
+
+        self.video_var.set(
+            "Preparing analysis..."
+        )
+
+        self.log_text.configure(
+            state="normal"
+        )
+
+        self.log_text.delete(
+            "1.0",
+            "end"
+        )
+
+        self.log_text.configure(
+            state="disabled"
+        )
+
+        self.output_folder = None
+
+        self.worker_thread = threading.Thread(
+            target=self.analysis_worker,
+            args=(folder,),
+            daemon=True,
+        )
+
+        self.worker_thread.start()
+
+    def analysis_worker(self, folder):
+        try:
+            output = run_batch_analysis(
+                folder,
+                log_callback=lambda message:
+                    self.events.put(
+                        (
+                            "log",
+                            message
+                        )
+                    ),
+                progress_callback=lambda payload:
+                    self.events.put(
+                        (
+                            "progress",
+                            payload
+                        )
+                    ),
+            )
+
+            self.events.put(
+                (
+                    "success",
+                    str(output)
+                )
+            )
+
+        except Exception:
+            self.events.put(
+                (
+                    "error",
+                    traceback.format_exc()
+                )
+            )
+
+    def poll_events(self):
+        try:
+            while True:
+                event_type, payload = (
+                    self.events.get_nowait()
+                )
+
+                if event_type == "log":
+                    self.append_log(
+                        payload
+                    )
+
+                elif event_type == "progress":
+                    self.update_progress(
+                        payload
+                    )
+
+                elif event_type == "success":
+                    self.output_folder = Path(
+                        payload
+                    )
+
+                    self.start_button.configure(
+                        state="normal"
+                    )
+
+                    self.select_button.configure(
+                        state="normal"
+                    )
+
+                    self.open_button.configure(
+                        state="normal"
+                    )
+
+                    self.current_progress[
+                        "value"
+                    ] = 100
+
+                    self.overall_progress[
+                        "value"
+                    ] = 100
+
+                    self.status_var.set(
+                        "Analysis finished successfully."
+                    )
+
+                    self.video_var.set(
+                        "Finished."
+                    )
+
+                    self.append_log(
+                        (
+                            "\nFINISHED\nResults: "
+                            f"{self.output_folder}"
+                        )
+                    )
+
+                    messagebox.showinfo(
+                        "Analysis finished",
+                        (
+                            "Analysis finished successfully.\n\n"
+                            f"Results:\n{self.output_folder}"
+                        ),
+                        parent=self.root,
+                    )
+
+                elif event_type == "error":
+                    self.start_button.configure(
+                        state="normal"
+                    )
+
+                    self.select_button.configure(
+                        state="normal"
+                    )
+
+                    self.status_var.set(
+                        "Analysis failed."
+                    )
+
+                    self.video_var.set(
+                        "Stopped because of an error."
+                    )
+
+                    self.append_log(
+                        "\nERROR:\n" + payload
+                    )
+
+                    messagebox.showerror(
+                        "Analysis failed",
+                        (
+                            "The analysis stopped because of an error.\n\n"
+                            "See the analysis log for details."
+                        ),
+                        parent=self.root,
+                    )
+
+        except queue.Empty:
+            pass
+
+        self.root.after(
+            100,
+            self.poll_events
+        )
+
+    def update_progress(self, payload):
+        stage = payload.get(
+            "stage",
+            ""
+        )
+
+        percent = float(
+            payload.get(
+                "percent",
+                0.0
+            )
+        )
+
+        video_index = int(
+            payload.get(
+                "video_index",
+                0
+            )
+        )
+
+        total_videos = int(
+            payload.get(
+                "total_videos",
+                0
+            )
+        )
+
+        video_name = payload.get(
+            "video_name",
+            ""
+        )
+
+        folder_name = payload.get(
+            "folder_name",
+            ""
+        )
+
+        if stage == "video_start":
+            self.current_progress[
+                "value"
+            ] = 0
+
+            self.video_var.set(
+                (
+                    f"Video {video_index}/{total_videos}: "
+                    f"{folder_name} | {video_name}"
+                )
+            )
+
+        elif stage == "measure":
+            # Measurement occupies first half of current-video
+            # progress.
+            self.current_progress[
+                "value"
+            ] = 0.5 * percent
+
+        elif stage == "write":
+            # Marked-video writing occupies second half.
+            self.current_progress[
+                "value"
+            ] = 50.0 + 0.5 * percent
+
+        elif stage in (
+            "video_done",
+            "video_failed",
+        ):
+            self.current_progress[
+                "value"
+            ] = 100
+
+            if total_videos > 0:
+                self.overall_progress[
+                    "value"
+                ] = (
+                    100.0
+                    * video_index
+                    / total_videos
+                )
+
+        elif stage == "all_done":
+            self.current_progress[
+                "value"
+            ] = 100
+
+            self.overall_progress[
+                "value"
+            ] = 100
+
+    def open_results(self):
+        if (
+            self.output_folder is None
+            or not self.output_folder.exists()
+        ):
+            return
+
+        try:
+            if os.name == "nt":
+                os.startfile(
+                    str(
+                        self.output_folder
+                    )
+                )
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.Popen(
+                    [
+                        "open",
+                        str(
+                            self.output_folder
+                        )
+                    ]
+                )
+            else:
+                import subprocess
+                subprocess.Popen(
+                    [
+                        "xdg-open",
+                        str(
+                            self.output_folder
+                        )
+                    ]
+                )
+
+        except Exception as error:
+            messagebox.showerror(
+                "Could not open folder",
+                str(error),
+                parent=self.root,
+            )
+
+
+# ============================================================
+# START APPLICATION
+# ============================================================
+
+def main():
+    root = tk.Tk()
+
+    app = LiftHeightAnalyzerApp(
+        root
+    )
+
+    root.mainloop()
+
 
 if __name__ == "__main__":
-
     main()
