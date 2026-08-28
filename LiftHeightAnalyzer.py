@@ -1900,7 +1900,24 @@ def build_monotonic_tracked_curve(
     )
 
 
-def detect_rulers(image):
+def detect_rulers(
+    image,
+    log_callback=None
+):
+    """
+    Detect left and right ruler boxes.
+
+    The normal strict detector is tried first.
+
+    If one ruler is missed, an adaptive fallback searches the
+    corresponding side of the image for a broad, vertically
+    persistent dark object. When the opposite ruler was detected
+    normally, its width and vertical extent are used as additional
+    geometric guidance.
+
+    This function affects only static geometry calibration. It does
+    not alter any capillary-rise measurement.
+    """
 
     h, w = image.shape[:2]
 
@@ -1910,11 +1927,13 @@ def detect_rulers(image):
     )
 
     y0 = int(
-        0.08 * h
+        0.08
+        * h
     )
 
     y1 = int(
-        0.97 * h
+        0.97
+        * h
     )
 
     band = gray[
@@ -1922,18 +1941,26 @@ def detect_rulers(image):
         :
     ]
 
+    # --------------------------------------------------------
+    # STRICT / ORIGINAL DETECTOR
+    # --------------------------------------------------------
+
     dark_fraction = np.mean(
-        band < RULER_DARK_THRESHOLD,
+        band
+        < RULER_DARK_THRESHOLD,
         axis=0
     )
 
     column_mask = (
         dark_fraction
         > RULER_MIN_DARK_FRACTION
-    ).astype(np.uint8) * 255
+    ).astype(
+        np.uint8
+    ) * 255
 
     close_width = odd_number(
-        0.018 * w
+        0.018
+        * w
     )
 
     kernel = np.ones(
@@ -1945,7 +1972,10 @@ def detect_rulers(image):
     )
 
     column_mask = cv2.morphologyEx(
-        column_mask.reshape(1, -1),
+        column_mask.reshape(
+            1,
+            -1
+        ),
         cv2.MORPH_CLOSE,
         kernel
     ).ravel()
@@ -1954,15 +1984,21 @@ def detect_rulers(image):
 
     start = None
 
-    for x in range(w):
+    for x in range(
+        w
+    ):
 
         active = (
-            column_mask[x] > 0
+            column_mask[
+                x
+            ]
+            > 0
         )
 
         if (
             active
-            and start is None
+            and
+            start is None
         ):
 
             start = x
@@ -1972,7 +2008,9 @@ def detect_rulers(image):
             and
             (
                 not active
-                or x == w - 1
+                or
+                x
+                == w - 1
             )
         ):
 
@@ -1988,12 +2026,20 @@ def detect_rulers(image):
                 + 1
             )
 
-            if region_width > 0.04 * w:
+            if (
+                region_width
+                > 0.04
+                * w
+            ):
 
                 regions.append(
                     (
-                        start,
-                        end
+                        int(
+                            start
+                        ),
+                        int(
+                            end
+                        )
                     )
                 )
 
@@ -2006,103 +2052,1807 @@ def detect_rulers(image):
     for region in regions:
 
         centre = (
-            region[0]
-            + region[1]
+            region[
+                0
+            ]
+            + region[
+                1
+            ]
         ) / 2.0
 
-        if centre < 0.45 * w:
+        if (
+            centre
+            < 0.45
+            * w
+        ):
 
             left_candidates.append(
                 region
             )
 
-        elif centre > 0.55 * w:
+        elif (
+            centre
+            > 0.55
+            * w
+        ):
 
             right_candidates.append(
                 region
             )
 
-    if not left_candidates:
+    def strict_region_score(
+        region
+    ):
 
-        raise RuntimeError(
-            "Could not detect left ruler."
+        xs, xe = region
+
+        mean_dark = float(
+            np.mean(
+                dark_fraction[
+                    xs:
+                    xe + 1
+                ]
+            )
         )
 
-    if not right_candidates:
-
-        raise RuntimeError(
-            "Could not detect right ruler."
+        region_width = (
+            xe
+            - xs
+            + 1
         )
 
-    left_region = max(
-        left_candidates,
-        key=lambda r:
-        r[1] - r[0]
+        return (
+            mean_dark
+            + 0.10
+            * min(
+                region_width
+                / max(
+                    1.0,
+                    0.12
+                    * w
+                ),
+                1.5
+            )
+        )
+
+    left_region = (
+        max(
+            left_candidates,
+            key=strict_region_score
+        )
+        if left_candidates
+        else None
     )
 
-    right_region = max(
-        right_candidates,
-        key=lambda r:
-        r[1] - r[0]
+    right_region = (
+        max(
+            right_candidates,
+            key=strict_region_score
+        )
+        if right_candidates
+        else None
     )
 
-    def make_box(region):
+    # --------------------------------------------------------
+    # BOX VERTICAL EXTENT
+    # --------------------------------------------------------
+
+    def make_box(
+        region,
+        reference_box=None
+    ):
 
         xs, xe = region
 
         roi = gray[
             :,
-            xs:xe + 1
+            xs:
+            xe + 1
         ]
 
+        # More tolerant threshold than the strict horizontal
+        # detector. White ruler ticks/numbers naturally reduce the
+        # dark fraction of some rows.
         row_dark_fraction = np.mean(
-            roi < RULER_DARK_THRESHOLD,
+            roi
+            < max(
+                145,
+                RULER_DARK_THRESHOLD
+                + 25
+            ),
             axis=1
         )
 
+        row_mask = (
+            row_dark_fraction
+            > 0.20
+        ).astype(
+            np.uint8
+        ) * 255
+
+        vertical_close = max(
+            5,
+            int(
+                0.012
+                * h
+            )
+        )
+
+        row_mask = cv2.morphologyEx(
+            row_mask.reshape(
+                -1,
+                1
+            ),
+            cv2.MORPH_CLOSE,
+            np.ones(
+                (
+                    vertical_close,
+                    1
+                ),
+                dtype=np.uint8
+            )
+        ).ravel()
+
         ys = np.where(
-            row_dark_fraction > 0.30
+            row_mask
+            > 0
         )[0]
 
-        if len(ys) == 0:
+        if len(
+            ys
+        ) == 0:
 
-            raise RuntimeError(
-                "Could not determine ruler vertical extent."
+            if reference_box is None:
+
+                raise RuntimeError(
+                    "Could not determine ruler vertical extent."
+                )
+
+            top = int(
+                reference_box[
+                    1
+                ]
             )
 
+            bottom = int(
+                reference_box[
+                    1
+                ]
+                + reference_box[
+                    3
+                ]
+                - 1
+            )
+
+        else:
+
+            # Find the longest meaningful run rather than allowing
+            # a small isolated dark object to define the box.
+            runs = []
+
+            run_start = int(
+                ys[
+                    0
+                ]
+            )
+
+            previous = int(
+                ys[
+                    0
+                ]
+            )
+
+            for y_value in ys[
+                1:
+            ]:
+
+                y_value = int(
+                    y_value
+                )
+
+                if (
+                    y_value
+                    >
+                    previous + 1
+                ):
+
+                    runs.append(
+                        (
+                            run_start,
+                            previous
+                        )
+                    )
+
+                    run_start = (
+                        y_value
+                    )
+
+                previous = (
+                    y_value
+                )
+
+            runs.append(
+                (
+                    run_start,
+                    previous
+                )
+            )
+
+            top, bottom = max(
+                runs,
+                key=lambda run:
+                run[
+                    1
+                ]
+                - run[
+                    0
+                ]
+            )
+
+            # If the opposite ruler is already reliable, use its
+            # vertical span as guidance. The two physical rulers in
+            # this setup are mounted at essentially the same height.
+            if reference_box is not None:
+
+                reference_top = int(
+                    reference_box[
+                        1
+                    ]
+                )
+
+                reference_bottom = int(
+                    reference_box[
+                        1
+                    ]
+                    + reference_box[
+                        3
+                    ]
+                    - 1
+                )
+
+                top = min(
+                    int(
+                        top
+                    ),
+                    reference_top
+                )
+
+                bottom = max(
+                    int(
+                        bottom
+                    ),
+                    reference_bottom
+                )
+
         top = int(
-            ys.min()
+            np.clip(
+                top,
+                0,
+                h - 1
+            )
         )
 
         bottom = int(
-            ys.max()
+            np.clip(
+                bottom,
+                top,
+                h - 1
+            )
         )
 
-        width = (
-            xe - xs + 1
+        box_width = int(
+            xe
+            - xs
+            + 1
         )
 
-        height = (
-            bottom - top + 1
+        box_height = int(
+            bottom
+            - top
+            + 1
         )
 
         return (
-            int(xs),
-            int(top),
-            int(width),
-            int(height),
-            int(width * height)
+            int(
+                xs
+            ),
+            int(
+                top
+            ),
+            int(
+                box_width
+            ),
+            int(
+                box_height
+            ),
+            int(
+                box_width
+                * box_height
+            )
+        )
+
+    # First construct any ruler that the strict detector found.
+    left_box = None
+
+    right_box = None
+
+    if left_region is not None:
+
+        try:
+
+            left_box = make_box(
+                left_region
+            )
+
+        except RuntimeError:
+
+            left_box = None
+
+    if right_region is not None:
+
+        try:
+
+            right_box = make_box(
+                right_region
+            )
+
+        except RuntimeError:
+
+            right_box = None
+
+    # --------------------------------------------------------
+    # ADAPTIVE HORIZONTAL FALLBACK
+    # --------------------------------------------------------
+
+    def find_fallback_region(
+        side,
+        reference_box=None
+    ):
+
+        # Ignore the very top and very bottom because clamps,
+        # reflections and the reservoir can make those sections
+        # unrepresentative. A ruler remains dark through most of
+        # the central height.
+        fallback_y0 = int(
+            0.15
+            * h
+        )
+
+        fallback_y1 = int(
+            0.93
+            * h
+        )
+
+        fallback_band = gray[
+            fallback_y0:
+            fallback_y1,
+            :
+        ]
+
+        strict_column_dark = np.mean(
+            fallback_band
+            < RULER_DARK_THRESHOLD,
+            axis=0
+        )
+
+        moderate_column_dark = np.mean(
+            fallback_band
+            < max(
+                155,
+                RULER_DARK_THRESHOLD
+                + 45
+            ),
+            axis=0
+        )
+
+        # Give most weight to truly black pixels, but tolerate a
+        # ruler whose apparent black level was lifted by exposure.
+        metric = (
+            0.65
+            * strict_column_dark
+            +
+            0.35
+            * moderate_column_dark
+        )
+
+        if side == "left":
+
+            search_x0 = int(
+                0.05
+                * w
+            )
+
+            search_x1 = int(
+                0.47
+                * w
+            )
+
+        elif side == "right":
+
+            search_x0 = int(
+                0.53
+                * w
+            )
+
+            search_x1 = int(
+                0.95
+                * w
+            )
+
+        else:
+
+            raise ValueError(
+                "side must be left or right"
+            )
+
+        if reference_box is not None:
+
+            reference_width = int(
+                reference_box[
+                    2
+                ]
+            )
+
+        else:
+
+            reference_width = int(
+                0.16
+                * w
+            )
+
+        minimum_width = max(
+            35,
+            int(
+                0.075
+                * w
+            )
+        )
+
+        maximum_width = min(
+            int(
+                0.23
+                * w
+            ),
+            search_x1
+            - search_x0
+        )
+
+        width_candidates = sorted(
+            set(
+                [
+                    int(
+                        np.clip(
+                            reference_width
+                            * factor,
+                            minimum_width,
+                            maximum_width
+                        )
+                    )
+                    for factor
+                    in (
+                        0.72,
+                        0.85,
+                        1.00,
+                        1.15,
+                        1.30
+                    )
+                ]
+            )
+        )
+
+        cumulative = np.concatenate(
+            (
+                np.asarray(
+                    [
+                        0.0
+                    ],
+                    dtype=np.float64
+                ),
+                np.cumsum(
+                    metric,
+                    dtype=np.float64
+                )
+            )
+        )
+
+        preliminary = []
+
+        for candidate_width in width_candidates:
+
+            latest_start = (
+                search_x1
+                - candidate_width
+            )
+
+            if (
+                latest_start
+                <= search_x0
+            ):
+                continue
+
+            starts = np.arange(
+                search_x0,
+                latest_start + 1,
+                dtype=int
+            )
+
+            window_scores = (
+                cumulative[
+                    starts
+                    + candidate_width
+                ]
+                - cumulative[
+                    starts
+                ]
+            ) / float(
+                candidate_width
+            )
+
+            top_count = min(
+                20,
+                len(
+                    starts
+                )
+            )
+
+            if top_count <= 0:
+                continue
+
+            if (
+                top_count
+                == len(
+                    starts
+                )
+            ):
+
+                best_positions = np.arange(
+                    len(
+                        starts
+                    )
+                )
+
+            else:
+
+                best_positions = np.argpartition(
+                    window_scores,
+                    -top_count
+                )[
+                    -top_count:
+                ]
+
+            for position in best_positions:
+
+                xs = int(
+                    starts[
+                        position
+                    ]
+                )
+
+                xe = int(
+                    xs
+                    + candidate_width
+                    - 1
+                )
+
+                preliminary.append(
+                    (
+                        float(
+                            window_scores[
+                                position
+                            ]
+                        ),
+                        xs,
+                        xe
+                    )
+                )
+
+        if not preliminary:
+
+            return None
+
+        preliminary.sort(
+            key=lambda item:
+            item[
+                0
+            ],
+            reverse=True
+        )
+
+        best = None
+
+        for (
+            horizontal_score,
+            xs,
+            xe
+        ) in preliminary[
+            :60
+        ]:
+
+            candidate_roi = gray[
+                fallback_y0:
+                fallback_y1,
+                xs:
+                xe + 1
+            ]
+
+            row_dark = np.mean(
+                candidate_roi
+                < max(
+                    155,
+                    RULER_DARK_THRESHOLD
+                    + 45
+                ),
+                axis=1
+            )
+
+            if len(
+                row_dark
+            ) < 8:
+                continue
+
+            # The ruler should remain dark in many separated
+            # vertical sections. A clamp or isolated fixture tends
+            # to be dark only in part of the height.
+            sections = np.array_split(
+                row_dark,
+                8
+            )
+
+            section_scores = np.asarray(
+                [
+                    float(
+                        np.mean(
+                            section
+                        )
+                    )
+                    for section
+                    in sections
+                    if len(
+                        section
+                    ) > 0
+                ],
+                dtype=np.float64
+            )
+
+            continuity_score = float(
+                np.median(
+                    section_scores
+                )
+            )
+
+            persistent_sections = float(
+                np.mean(
+                    section_scores
+                    > 0.28
+                )
+            )
+
+            # Use the opposite ruler's width if available. This
+            # helps distinguish the broad ruler from narrow black
+            # fixture posts.
+            if reference_box is not None:
+
+                width_ratio = (
+                    (
+                        xe
+                        - xs
+                        + 1
+                    )
+                    /
+                    max(
+                        1.0,
+                        float(
+                            reference_box[
+                                2
+                            ]
+                        )
+                    )
+                )
+
+                width_score = float(
+                    np.exp(
+                        -abs(
+                            np.log(
+                                max(
+                                    1e-6,
+                                    width_ratio
+                                )
+                            )
+                        )
+                    )
+                )
+
+            else:
+
+                width_score = 1.0
+
+            total_score = (
+                0.48
+                * horizontal_score
+                +
+                0.32
+                * continuity_score
+                +
+                0.12
+                * persistent_sections
+                +
+                0.08
+                * width_score
+            )
+
+            candidate = (
+                total_score,
+                xs,
+                xe,
+                horizontal_score,
+                continuity_score,
+                persistent_sections
+            )
+
+            if (
+                best is None
+                or
+                candidate[
+                    0
+                ]
+                > best[
+                    0
+                ]
+            ):
+
+                best = candidate
+
+        if best is None:
+
+            return None
+
+        (
+            total_score,
+            xs,
+            xe,
+            horizontal_score,
+            continuity_score,
+            persistent_sections
+        ) = best
+
+        # Intentionally permissive because this is already limited
+        # to one side of the image and usually guided by the other
+        # ruler's dimensions.
+        if (
+            total_score
+            < 0.28
+        ):
+
+            return None
+
+        emit_log(
+            log_callback,
+            (
+                f"Adaptive {side} ruler fallback: "
+                f"x={xs}:{xe}, "
+                f"score={total_score:.3f}, "
+                f"dark={horizontal_score:.3f}, "
+                f"continuity={continuity_score:.3f}."
+            )
+        )
+
+        return (
+            int(
+                xs
+            ),
+            int(
+                xe
+            )
+        )
+
+    # If only one side was found strictly, use it to guide the
+    # missing side.
+    if left_box is None:
+
+        fallback_left = find_fallback_region(
+            "left",
+            reference_box=right_box
+        )
+
+        if fallback_left is not None:
+
+            left_box = make_box(
+                fallback_left,
+                reference_box=right_box
+            )
+
+    if right_box is None:
+
+        fallback_right = find_fallback_region(
+            "right",
+            reference_box=left_box
+        )
+
+        if fallback_right is not None:
+
+            right_box = make_box(
+                fallback_right,
+                reference_box=left_box
+            )
+
+    # If both strict detections failed, the first fallback had no
+    # reference. Give the second pass the newly found box.
+    if left_box is None:
+
+        fallback_left = find_fallback_region(
+            "left",
+            reference_box=right_box
+        )
+
+        if fallback_left is not None:
+
+            left_box = make_box(
+                fallback_left,
+                reference_box=right_box
+            )
+
+    if right_box is None:
+
+        fallback_right = find_fallback_region(
+            "right",
+            reference_box=left_box
+        )
+
+        if fallback_right is not None:
+
+            right_box = make_box(
+                fallback_right,
+                reference_box=left_box
+            )
+
+    if left_box is None:
+
+        raise RuntimeError(
+            "Could not detect left ruler."
+        )
+
+    if right_box is None:
+
+        raise RuntimeError(
+            "Could not detect right ruler."
         )
 
     return (
-        make_box(left_region),
-        make_box(right_region)
+        left_box,
+        right_box
     )
 
 
-# ============================================================
-# MAJOR SPACING
-# ============================================================
+
+
+def detect_rulers_by_tick_pattern(
+    image,
+    log_callback=None
+):
+    """
+    Detect ruler boxes from their repeated horizontal tick pattern.
+
+    This fallback is deliberately different from the normal dark-
+    rectangle detector. A ruler is identified by:
+        - strong repeated horizontal image gradients;
+        - a broad vertically persistent rectangular region;
+        - an expected width range;
+        - side-specific position.
+
+    This helps reject dark clamps and fixtures, which may be very
+    black but do not contain the same dense horizontal tick pattern.
+
+    Static geometry only. No height-vs-time data are created.
+    """
+
+    h, w = image.shape[:2]
+
+    gray = cv2.cvtColor(
+        image,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    analysis_y0 = int(
+        0.10
+        * h
+    )
+
+    analysis_y1 = int(
+        0.94
+        * h
+    )
+
+    analysis = gray[
+        analysis_y0:
+        analysis_y1,
+        :
+    ]
+
+    grad_y = np.abs(
+        cv2.Sobel(
+            analysis,
+            cv2.CV_32F,
+            0,
+            1,
+            ksize=3
+        )
+    )
+
+    # Adaptive but with a useful minimum. On the supplied failing
+    # Top2 screenshots this is about 48 gray-level gradient units.
+    edge_threshold = max(
+        35.0,
+        float(
+            np.percentile(
+                grad_y,
+                82
+            )
+        )
+    )
+
+    horizontal_edge = (
+        grad_y
+        > edge_threshold
+    ).astype(
+        np.float32
+    )
+
+    marker_width_fractions = (
+        0.13,
+        0.15,
+        0.17,
+        0.19,
+        0.21
+    )
+
+    def score_window(
+        x0,
+        width
+    ):
+
+        x1 = (
+            x0
+            + width
+        )
+
+        edge_roi = horizontal_edge[
+            :,
+            x0:x1
+        ]
+
+        gray_roi = analysis[
+            :,
+            x0:x1
+        ]
+
+        if (
+            edge_roi.size == 0
+            or
+            gray_roi.size == 0
+        ):
+            return -np.inf
+
+        # Overall density of strong horizontal gradients.
+        horizontal_density = float(
+            np.mean(
+                edge_roi
+            )
+        )
+
+        # Fraction of rows that contain a substantial horizontal
+        # line segment. The repeated ruler ticks score very highly.
+        row_coverage = np.mean(
+            edge_roi,
+            axis=1
+        )
+
+        repeated_line_fraction = float(
+            np.mean(
+                row_coverage
+                > 0.16
+            )
+        )
+
+        # Black ruler background.
+        dark_fraction = float(
+            np.mean(
+                gray_roi
+                < 150
+            )
+        )
+
+        # Rulers have strong black/white contrast due to the ticks,
+        # major lines and digits.
+        contrast_score = min(
+            float(
+                np.std(
+                    gray_roi
+                )
+                / 128.0
+            ),
+            1.5
+        )
+
+        return (
+            0.35
+            * horizontal_density
+            * 5.0
+            +
+            0.30
+            * repeated_line_fraction
+            * 3.0
+            +
+            0.20
+            * dark_fraction
+            +
+            0.15
+            * contrast_score
+        )
+
+    def find_horizontal_region(
+        side
+    ):
+
+        if side == "left":
+
+            search_x0 = int(
+                0.05
+                * w
+            )
+
+            search_x1 = int(
+                0.48
+                * w
+            )
+
+        elif side == "right":
+
+            search_x0 = int(
+                0.52
+                * w
+            )
+
+            search_x1 = int(
+                0.95
+                * w
+            )
+
+        else:
+
+            raise ValueError(
+                "side must be left or right"
+            )
+
+        coarse_step = max(
+            1,
+            int(
+                0.004
+                * w
+            )
+        )
+
+        best = None
+
+        for width_fraction in marker_width_fractions:
+
+            candidate_width = int(
+                round(
+                    width_fraction
+                    * w
+                )
+            )
+
+            if candidate_width < 20:
+                continue
+
+            last_start = (
+                search_x1
+                - candidate_width
+            )
+
+            if last_start <= search_x0:
+                continue
+
+            for x0 in range(
+                search_x0,
+                last_start + 1,
+                coarse_step
+            ):
+
+                score = score_window(
+                    x0,
+                    candidate_width
+                )
+
+                if (
+                    best is None
+                    or
+                    score
+                    > best[
+                        0
+                    ]
+                ):
+
+                    best = (
+                        float(
+                            score
+                        ),
+                        int(
+                            x0
+                        ),
+                        int(
+                            candidate_width
+                        )
+                    )
+
+        if best is None:
+
+            raise RuntimeError(
+                f"Could not find {side} ruler tick-pattern region."
+            )
+
+        best_score, best_x0, best_width = best
+
+        # Pixel-level refinement around the best coarse position.
+        refinement_radius = max(
+            2,
+            coarse_step
+        )
+
+        refined_start = max(
+            search_x0,
+            best_x0
+            - refinement_radius
+        )
+
+        refined_end = min(
+            search_x1
+            - best_width,
+            best_x0
+            + refinement_radius
+        )
+
+        for x0 in range(
+            refined_start,
+            refined_end + 1
+        ):
+
+            score = score_window(
+                x0,
+                best_width
+            )
+
+            if score > best_score:
+
+                best_score = float(
+                    score
+                )
+
+                best_x0 = int(
+                    x0
+                )
+
+        emit_log(
+            log_callback,
+            (
+                f"Tick-pattern {side} ruler candidate: "
+                f"x={best_x0}:"
+                f"{best_x0 + best_width - 1}, "
+                f"score={best_score:.3f}."
+            )
+        )
+
+        return (
+            best_x0,
+            best_x0
+            + best_width
+            - 1,
+            best_score
+        )
+
+    def estimate_vertical_box(
+        region
+    ):
+
+        x0, x1, _ = region
+
+        roi = gray[
+            :,
+            x0:
+            x1 + 1
+        ]
+
+        local_grad_y = np.abs(
+            cv2.Sobel(
+                roi,
+                cv2.CV_32F,
+                0,
+                1,
+                ksize=3
+            )
+        )
+
+        row_edge_fraction = np.mean(
+            local_grad_y
+            > edge_threshold,
+            axis=1
+        )
+
+        row_dark_fraction = np.mean(
+            roi
+            < 160,
+            axis=1
+        )
+
+        presence = (
+            (
+                row_edge_fraction
+                > 0.04
+            )
+            |
+            (
+                row_dark_fraction
+                > 0.50
+            )
+        ).astype(
+            np.uint8
+        ) * 255
+
+        close_height = max(
+            5,
+            int(
+                0.015
+                * h
+            )
+        )
+
+        presence = cv2.morphologyEx(
+            presence.reshape(
+                -1,
+                1
+            ),
+            cv2.MORPH_CLOSE,
+            np.ones(
+                (
+                    close_height,
+                    1
+                ),
+                dtype=np.uint8
+            )
+        ).ravel()
+
+        ys = np.where(
+            presence
+            > 0
+        )[0]
+
+        runs = []
+
+        if len(
+            ys
+        ) > 0:
+
+            run_start = int(
+                ys[
+                    0
+                ]
+            )
+
+            previous = int(
+                ys[
+                    0
+                ]
+            )
+
+            for y_value in ys[
+                1:
+            ]:
+
+                y_value = int(
+                    y_value
+                )
+
+                if (
+                    y_value
+                    > previous + 1
+                ):
+
+                    runs.append(
+                        (
+                            run_start,
+                            previous
+                        )
+                    )
+
+                    run_start = y_value
+
+                previous = y_value
+
+            runs.append(
+                (
+                    run_start,
+                    previous
+                )
+            )
+
+        long_runs = [
+            run
+            for run
+            in runs
+            if (
+                run[
+                    1
+                ]
+                - run[
+                    0
+                ]
+                >= 0.40
+                * h
+            )
+        ]
+
+        if long_runs:
+
+            top, bottom = max(
+                long_runs,
+                key=lambda run:
+                run[
+                    1
+                ]
+                - run[
+                    0
+                ]
+            )
+
+        else:
+
+            # Safe static-geometry fallback. The later major-line
+            # validation still has to succeed before this frame can
+            # be accepted.
+            top = int(
+                0.08
+                * h
+            )
+
+            bottom = int(
+                0.97
+                * h
+            )
+
+        width = int(
+            x1
+            - x0
+            + 1
+        )
+
+        box_height = int(
+            bottom
+            - top
+            + 1
+        )
+
+        return (
+            int(
+                x0
+            ),
+            int(
+                top
+            ),
+            int(
+                width
+            ),
+            int(
+                box_height
+            ),
+            int(
+                width
+                * box_height
+            )
+        )
+
+    left_region = find_horizontal_region(
+        "left"
+    )
+
+    right_region = find_horizontal_region(
+        "right"
+    )
+
+    left_box = estimate_vertical_box(
+        left_region
+    )
+
+    right_box = estimate_vertical_box(
+        right_region
+    )
+
+    # The two rulers are mounted at essentially the same vertical
+    # position. Use the common overlapping span, when sufficiently
+    # large, so both major-line detectors analyse matching heights.
+    common_top = max(
+        left_box[
+            1
+        ],
+        right_box[
+            1
+        ]
+    )
+
+    common_bottom = min(
+        left_box[
+            1
+        ]
+        + left_box[
+            3
+        ]
+        - 1,
+        right_box[
+            1
+        ]
+        + right_box[
+            3
+        ]
+        - 1
+    )
+
+    if (
+        common_bottom
+        - common_top
+        >= 0.40
+        * h
+    ):
+
+        left_box = (
+            left_box[
+                0
+            ],
+            int(
+                common_top
+            ),
+            left_box[
+                2
+            ],
+            int(
+                common_bottom
+                - common_top
+                + 1
+            ),
+            int(
+                left_box[
+                    2
+                ]
+                * (
+                    common_bottom
+                    - common_top
+                    + 1
+                )
+            )
+        )
+
+        right_box = (
+            right_box[
+                0
+            ],
+            int(
+                common_top
+            ),
+            right_box[
+                2
+            ],
+            int(
+                common_bottom
+                - common_top
+                + 1
+            ),
+            int(
+                right_box[
+                    2
+                ]
+                * (
+                    common_bottom
+                    - common_top
+                    + 1
+                )
+            )
+        )
+
+    return (
+        left_box,
+        right_box
+    )
+
+
+def find_ruler_reference_frame(
+    cap,
+    first_frame,
+    fps,
+    total_frames,
+    log_callback=None
+):
+    """
+    Find an early frame with a fully valid ruler calibration.
+
+    Validation is now end-to-end:
+        1. detect ruler boxes;
+        2. detect major lines on both rulers;
+        3. pair the major lines;
+        4. verify that a 15-line 75 -> 5 sequence exists.
+
+    If the normal ruler detector produces plausible boxes but the
+    major-line calibration fails, the tick-pattern detector is tried
+    on that same frame before moving to another early frame.
+
+    Only static geometry is taken from a later reference frame.
+    Temporal wetting analysis continues to use frame 0.
+    """
+
+    candidate_indices = [
+        0,
+        1,
+        2,
+        5,
+        10,
+        int(
+            round(
+                0.25
+                * fps
+            )
+        ),
+        int(
+            round(
+                0.50
+                * fps
+            )
+        ),
+        int(
+            round(
+                0.75
+                * fps
+            )
+        ),
+        int(
+            round(
+                1.00
+                * fps
+            )
+        ),
+        int(
+            round(
+                1.50
+                * fps
+            )
+        ),
+        int(
+            round(
+                2.00
+                * fps
+            )
+        ),
+        int(
+            round(
+                3.00
+                * fps
+            )
+        )
+    ]
+
+    candidate_indices = sorted(
+        set(
+            [
+                int(
+                    np.clip(
+                        index,
+                        0,
+                        max(
+                            0,
+                            total_frames
+                            - 1
+                        )
+                    )
+                )
+                for index
+                in candidate_indices
+            ]
+        )
+    )
+
+    last_error = None
+
+    def validate_boxes(
+        frame,
+        frame_index,
+        left_ruler,
+        right_ruler,
+        detector_name
+    ):
+
+        left_major_marks = (
+            detect_major_ruler_marks(
+                frame,
+                left_ruler,
+                "left"
+            )
+        )
+
+        right_major_marks = (
+            detect_major_ruler_marks(
+                frame,
+                right_ruler,
+                "right"
+            )
+        )
+
+        major_pairs = pair_major_marks(
+            left_major_marks,
+            right_major_marks,
+            frame.shape[
+                0
+            ]
+        )
+
+        emit_log(
+            log_callback,
+            (
+                f"{detector_name} ruler validation on "
+                f"frame {frame_index}: "
+                f"left major={len(left_major_marks)}, "
+                f"right major={len(right_major_marks)}, "
+                f"paired={len(major_pairs)}."
+            )
+        )
+
+        if len(
+            major_pairs
+        ) < 15:
+
+            raise RuntimeError(
+                (
+                    f"{detector_name} ruler boxes produced "
+                    f"only {len(major_pairs)} paired major "
+                    f"lines."
+                )
+            )
+
+        # This verifies the actual 75 -> 5 sequence, not merely
+        # the number of detected lines.
+        select_top_down_major_scale(
+            major_pairs
+        )
+
+        return True
+
+    for frame_index in candidate_indices:
+
+        if frame_index == 0:
+
+            frame = first_frame
+
+        else:
+
+            cap.set(
+                cv2.CAP_PROP_POS_FRAMES,
+                frame_index
+            )
+
+            success, frame = cap.read()
+
+            if not success:
+                continue
+
+        # ----------------------------------------------------
+        # A. Normal / existing detector first
+        # ----------------------------------------------------
+
+        try:
+
+            (
+                left_ruler,
+                right_ruler
+            ) = detect_rulers(
+                frame,
+                log_callback=log_callback
+            )
+
+            validate_boxes(
+                frame,
+                frame_index,
+                left_ruler,
+                right_ruler,
+                "Standard"
+            )
+
+            if frame_index > 0:
+
+                emit_log(
+                    log_callback,
+                    (
+                        f"Ruler geometry recovered from "
+                        f"frame {frame_index} "
+                        f"({frame_index / fps:.3f} s) "
+                        f"instead of frame 0."
+                    )
+                )
+
+            cap.set(
+                cv2.CAP_PROP_POS_FRAMES,
+                0
+            )
+
+            return (
+                frame,
+                int(
+                    frame_index
+                ),
+                left_ruler,
+                right_ruler
+            )
+
+        except RuntimeError as error:
+
+            last_error = error
+
+        # ----------------------------------------------------
+        # B. Tick-pattern detector on the same frame
+        # ----------------------------------------------------
+
+        try:
+
+            (
+                left_ruler,
+                right_ruler
+            ) = detect_rulers_by_tick_pattern(
+                frame,
+                log_callback=log_callback
+            )
+
+            validate_boxes(
+                frame,
+                frame_index,
+                left_ruler,
+                right_ruler,
+                "Tick-pattern"
+            )
+
+            emit_log(
+                log_callback,
+                (
+                    f"Tick-pattern ruler fallback accepted "
+                    f"on frame {frame_index} "
+                    f"({frame_index / fps:.3f} s)."
+                )
+            )
+
+            cap.set(
+                cv2.CAP_PROP_POS_FRAMES,
+                0
+            )
+
+            return (
+                frame,
+                int(
+                    frame_index
+                ),
+                left_ruler,
+                right_ruler
+            )
+
+        except RuntimeError as error:
+
+            last_error = error
+
+    cap.set(
+        cv2.CAP_PROP_POS_FRAMES,
+        0
+    )
+
+    raise RuntimeError(
+        (
+            "Could not obtain a valid ruler calibration "
+            "from any tested early frame. "
+            f"Last error: {last_error}"
+        )
+    )
+
 
 def estimate_major_spacing(
     marks,
@@ -7037,20 +8787,26 @@ def process_video(
         )
 
     (
+        geometry_frame,
+        geometry_frame_index,
         left_ruler,
         right_ruler
-    ) = detect_rulers(
-        first_frame
+    ) = find_ruler_reference_frame(
+        cap,
+        first_frame,
+        fps,
+        total_frames,
+        log_callback=log_callback
     )
 
     left_major_marks = detect_major_ruler_marks(
-        first_frame,
+        geometry_frame,
         left_ruler,
         "left"
     )
 
     right_major_marks = detect_major_ruler_marks(
-        first_frame,
+        geometry_frame,
         right_ruler,
         "right"
     )
@@ -7075,7 +8831,7 @@ def process_video(
         sample_y_min,
         sample_y_max
     ) = detect_sample_edges(
-        first_frame
+        geometry_frame
     )
 
     sample_center_line = get_sample_center_line(
@@ -7157,6 +8913,16 @@ def process_video(
         )
     )
 
+
+    emit_log(
+        log_callback,
+        (
+            f"Static geometry reference frame: "
+            f"{geometry_frame_index} "
+            f"({geometry_frame_index / fps:.3f} s)."
+        )
+    )
+
     front_geometry = prepare_front_geometry(
         first_frame.shape,
         left_sample_line,
@@ -7171,7 +8937,7 @@ def process_video(
     # ========================================================
 
     geometry_overlay = draw_static_geometry(
-        first_frame,
+        geometry_frame,
         left_ruler,
         right_ruler,
         measurement_lines,
@@ -7183,7 +8949,7 @@ def process_video(
 
     geometry_check = np.hstack(
         (
-            first_frame,
+            geometry_frame,
             geometry_overlay
         )
     )
