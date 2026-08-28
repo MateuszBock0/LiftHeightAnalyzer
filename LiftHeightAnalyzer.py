@@ -80,11 +80,11 @@ TRACK_MIN_CONFIDENCE_PERCENT = 55.0
 
 
 # ============================================================
-# NEW: 3-OF-5 CONFIRMATION
+# CONFIRMATION
 # ============================================================
 
-# Examine five consecutive frames.
-TRACK_CONFIRM_WINDOW = 5
+# Examine consecutive frames.
+TRACK_CONFIRM_WINDOW = 6
 
 # At least three must support the new level.
 TRACK_CONFIRM_REQUIRED = 3
@@ -122,13 +122,16 @@ TRACK_INITIAL_HEIGHT_MM = 0.0
 TRACK_ONSET_MIN_HEIGHT_MM = 0.20
 
 
-# True:
-# interpolate continuously between confirmed anchors.
+# ============================================================
+# NO SYNTHETIC MEASUREMENT DATA
+# ============================================================
 #
-# IMPORTANT:
-# The first interpolation no longer starts at frame 0. The curve
-# stays exactly at zero until the first confirmed rise begins.
-TRACK_INTERPOLATE_BETWEEN_ANCHORS = True
+# Temporal interpolation/reconstruction is intentionally disabled.
+# Missing or unresolved measurement frames remain unresolved.
+#
+# Spatial interpolation used only for ruler calibration is still
+# allowed; it does NOT create time-series measurements.
+TRACK_INTERPOLATE_BETWEEN_ANCHORS = False
 
 
 # ============================================================
@@ -242,6 +245,28 @@ TRACK_REVIEW_WINDOW = 7
 TRACK_REVIEW_REQUIRED = 2
 TRACK_REVIEW_TOLERANCE_MM = 0.40
 TRACK_REVIEW_MIN_RISE_MM = 0.20
+
+
+# ============================================================
+# RETROSPECTIVE ONSET BACKTRACKING
+# ============================================================
+
+# Inspect actual earlier frame detections once a later front is
+# strongly confirmed. No missing value is calculated or filled.
+TRACK_ONSET_BACKTRACK_FRAMES = 24
+
+TRACK_ONSET_BACKTRACK_MIN_CONFIDENCE_PERCENT = 50.0
+
+# Raw onset candidates may have weaker wetting contrast than the
+# normal validator, but must still show positive temporal evidence.
+TRACK_ONSET_BACKTRACK_MIN_WETTING_SCORE = 0.10
+
+# Maximum allowed measured rise per frame when following an actual
+# trajectory backwards from a later confirmed measurement.
+TRACK_ONSET_BACKTRACK_MAX_RISE_PER_FRAME_MM = 0.20
+
+# Unresolved frames may occur between actual onset observations.
+TRACK_ONSET_BACKTRACK_MAX_CONSECUTIVE_MISSES = 3
 
 
 # ============================================================
@@ -452,6 +477,7 @@ def confidence_score_to_percent(score):
 # FIND A CONFIRMED LEVEL INSIDE ONE 5-FRAME WINDOW
 # ============================================================
 
+
 def find_confirmed_level_in_window(
     heights,
     confidences,
@@ -459,30 +485,12 @@ def find_confirmed_level_in_window(
     current_height
 ):
     """
-    Find a new level supported by at least 3 of 5 frames.
+    Confirm a new level from at least 3 of 5 actual frame-derived
+    measurements.
 
-    A frame participates only if:
-
-        confidence >= TRACK_MIN_CONFIDENCE_PERCENT
-
-    A group supports the same level if its measurements lie
-    within +/- TRACK_CONFIRM_TOLERANCE_MM of the candidate.
-
-    Among all valid clusters we select the HIGHEST confirmed
-    cluster, because this is an upward capillary-rise tracker.
-
-    Returns
-    -------
-    None
-
-    OR
-
-    {
-        "height": confirmed median height,
-        "anchor_index": representative frame index,
-        "support_indices": indices of supporting frames,
-        "support_count": number of agreeing frames
-    }
+    The cluster median is used only to identify a coherent group.
+    The returned height is the exact observed height in the chosen
+    representative frame.
     """
 
     heights = np.asarray(
@@ -501,9 +509,13 @@ def find_confirmed_level_in_window(
     )
 
     valid = (
-        np.isfinite(heights)
+        np.isfinite(
+            heights
+        )
         &
-        np.isfinite(confidences)
+        np.isfinite(
+            confidences
+        )
         &
         (
             confidences
@@ -511,23 +523,24 @@ def find_confirmed_level_in_window(
         )
     )
 
-    if np.sum(valid) < TRACK_CONFIRM_REQUIRED:
-
+    if np.sum(
+        valid
+    ) < TRACK_CONFIRM_REQUIRED:
         return None
 
-    valid_heights = heights[
-        valid
-    ]
+    valid_heights = (
+        heights[
+            valid
+        ]
+    )
 
-    valid_indices = global_indices[
-        valid
-    ]
+    valid_indices = (
+        global_indices[
+            valid
+        ]
+    )
 
     possible_clusters = []
-
-    # --------------------------------------------------------
-    # Try every reliable height as a possible cluster centre.
-    # --------------------------------------------------------
 
     for candidate_height in valid_heights:
 
@@ -546,7 +559,6 @@ def find_confirmed_level_in_window(
         )
 
         if support_count < TRACK_CONFIRM_REQUIRED:
-
             continue
 
         cluster_heights = (
@@ -561,76 +573,75 @@ def find_confirmed_level_in_window(
             ]
         )
 
-        # Median prevents one member of the cluster from
-        # defining the accepted level.
-        confirmed_height = float(
+        cluster_median = float(
             np.median(
                 cluster_heights
             )
         )
 
-        # ----------------------------------------------------
-        # INITIAL ZERO-REGION GUARD
-        #
-        # Before the first real capillary rise has been
-        # established, reject persistent edges that remain in
-        # the near-zero / liquid-level region.
-        #
-        # This specifically prevents a stable static edge around
-        # e.g. 0.8 mm from becoming the first tracked level.
-        # ----------------------------------------------------
+        distances = np.abs(
+            cluster_heights
+            - cluster_median
+        )
+
+        closest = float(
+            np.min(
+                distances
+            )
+        )
+
+        positions = np.where(
+            distances
+            <= closest
+            + 1e-9
+        )[0]
+
+        best_position = min(
+            positions,
+            key=lambda pos:
+            int(
+                cluster_indices[
+                    pos
+                ]
+            )
+        )
+
+        anchor_index = int(
+            cluster_indices[
+                best_position
+            ]
+        )
+
+        observed_height = float(
+            cluster_heights[
+                best_position
+            ]
+        )
 
         if (
             current_height
             <= TRACK_INITIAL_HEIGHT_MM
             + 1e-9
             and
-            confirmed_height
+            observed_height
             < TRACK_ONSET_MIN_HEIGHT_MM
         ):
-
             continue
 
-        # Must actually establish a new record level.
         if (
-            confirmed_height
+            observed_height
             < current_height
             + TRACK_MIN_RISE_MM
         ):
-
             continue
-
-        # Representative anchor frame:
-        #
-        # choose the first supporting frame whose measurement
-        # is close to the confirmed cluster median.
-        distances = np.abs(
-            cluster_heights
-            - confirmed_height
-        )
-
-        closest_distance = np.min(
-            distances
-        )
-
-        representative_candidates = (
-            cluster_indices[
-                distances
-                <= closest_distance
-                + 1e-9
-            ]
-        )
-
-        anchor_index = int(
-            np.min(
-                representative_candidates
-            )
-        )
 
         possible_clusters.append(
             {
                 "height":
-                    confirmed_height,
+                    observed_height,
+
+                "cluster_median":
+                    cluster_median,
 
                 "anchor_index":
                     anchor_index,
@@ -647,34 +658,25 @@ def find_confirmed_level_in_window(
         )
 
     if not possible_clusters:
-
         return None
 
-    # --------------------------------------------------------
-    # Prefer:
-    #
-    # 1. highest confirmed level
-    # 2. greater support count
-    # 3. earlier representative frame
-    # --------------------------------------------------------
-
-    best = max(
+    return max(
         possible_clusters,
         key=lambda item:
         (
-            item["height"],
-            item["support_count"],
-            -item["anchor_index"]
+            item[
+                "cluster_median"
+            ],
+            item[
+                "support_count"
+            ],
+            -item[
+                "anchor_index"
+            ]
         )
     )
 
-    return best
 
-
-
-# ============================================================
-# RETROSPECTIVE REVIEW OF A LARGE CONFIRMED JUMP
-# ============================================================
 
 def find_reviewed_anchors_between(
     heights,
@@ -685,23 +687,11 @@ def find_reviewed_anchors_between(
     end_height
 ):
     """
-    Look again inside a large jump between two strong tracking
-    states.
+    Review a large jump using only actual temporally validated
+    frame measurements.
 
-    IMPORTANT:
-    `heights` passed to this function are NOT the old unrestricted
-    raw strongest-edge measurements. They are the temporally
-    validated wetting-front candidates produced by the hybrid
-    detector.
-
-    Therefore, this review can safely be slightly more permissive
-    than the main 3-of-5 rule:
-
-        2 supporting detections inside 7 consecutive frames
-
-    The later strong 3-of-5 anchor acts as an upper bracket.
-
-    Returns a chronological list of weaker, reviewed anchors.
+    The 2-of-7 cluster median is used only for grouping.
+    Returned heights are exact observations from actual frames.
     """
 
     heights = np.asarray(
@@ -730,7 +720,6 @@ def find_reviewed_anchors_between(
         <= start_height
         + TRACK_REVIEW_TRIGGER_MM
     ):
-
         return []
 
     interval_start = (
@@ -741,40 +730,31 @@ def find_reviewed_anchors_between(
         end_index
     )
 
-    window_size = int(
-        TRACK_REVIEW_WINDOW
-    )
-
     required = int(
         TRACK_REVIEW_REQUIRED
     )
 
-    if (
-        interval_end
-        - interval_start
-        < required
-    ):
-
-        return []
-
     candidates = []
-
-    last_window_start = max(
-        interval_start,
-        interval_end
-        - window_size
-    )
 
     for window_start in range(
         interval_start,
-        last_window_start + 1
+        interval_end
     ):
 
         window_end = min(
             interval_end,
             window_start
-            + window_size
+            + int(
+                TRACK_REVIEW_WINDOW
+            )
         )
+
+        if (
+            window_end
+            - window_start
+            < required
+        ):
+            continue
 
         h_window = heights[
             window_start:
@@ -815,14 +795,12 @@ def find_reviewed_anchors_between(
             (
                 h_window
                 < end_height
-                + TRACK_REVIEW_TOLERANCE_MM
             )
         )
 
         if np.sum(
             valid
         ) < required:
-
             continue
 
         valid_heights = (
@@ -854,7 +832,6 @@ def find_reviewed_anchors_between(
             )
 
             if support_count < required:
-
                 continue
 
             cluster_heights = (
@@ -869,42 +846,60 @@ def find_reviewed_anchors_between(
                 ]
             )
 
-            reviewed_height = float(
+            cluster_median = float(
                 np.median(
                     cluster_heights
                 )
             )
 
-            # The reviewed point must live strictly between the
-            # lower and upper strong anchors.
-            if (
-                reviewed_height
-                <= start_height
-                + TRACK_REVIEW_MIN_RISE_MM
-                or
-                reviewed_height
-                >= end_height
-                - TRACK_REVIEW_MIN_RISE_MM
-            ):
-
-                continue
-
             distances = np.abs(
                 cluster_heights
-                - reviewed_height
+                - cluster_median
             )
 
-            anchor_index = int(
+            closest = float(
                 np.min(
+                    distances
+                )
+            )
+
+            positions = np.where(
+                distances
+                <= closest
+                + 1e-9
+            )[0]
+
+            best_position = min(
+                positions,
+                key=lambda pos:
+                int(
                     cluster_indices[
-                        distances
-                        <= np.min(
-                            distances
-                        )
-                        + 1e-9
+                        pos
                     ]
                 )
             )
+
+            anchor_index = int(
+                cluster_indices[
+                    best_position
+                ]
+            )
+
+            observed_height = float(
+                cluster_heights[
+                    best_position
+                ]
+        )
+
+            if (
+                observed_height
+                <= start_height
+                + TRACK_REVIEW_MIN_RISE_MM
+                or
+                observed_height
+                >= end_height
+            ):
+                continue
 
             candidates.append(
                 {
@@ -912,7 +907,10 @@ def find_reviewed_anchors_between(
                         anchor_index,
 
                     "height":
-                        reviewed_height,
+                        observed_height,
+
+                    "cluster_median":
+                        cluster_median,
 
                     "support_indices":
                         cluster_indices.copy(),
@@ -926,15 +924,7 @@ def find_reviewed_anchors_between(
             )
 
     if not candidates:
-
         return []
-
-    # --------------------------------------------------------
-    # Deduplicate overlapping 7-frame windows.
-    #
-    # Greedily retain a chronological, monotonically increasing
-    # sequence with a meaningful physical height advance.
-    # --------------------------------------------------------
 
     candidates.sort(
         key=lambda item:
@@ -943,19 +933,19 @@ def find_reviewed_anchors_between(
                 "anchor_index"
             ],
             -item[
-                "height"
+                "support_count"
             ]
         )
     )
 
     reviewed = []
 
-    current_height = float(
-        start_height
-    )
-
     current_index = int(
         start_index
+    )
+
+    current_height = float(
+        start_height
     )
 
     while True:
@@ -985,14 +975,12 @@ def find_reviewed_anchors_between(
                     "height"
                 ]
                 < end_height
-                - TRACK_REVIEW_MIN_RISE_MM
             )
         ]
 
         if not eligible:
             break
 
-        # Prefer the earliest reliable progression point.
         earliest_index = min(
             item[
                 "anchor_index"
@@ -1001,7 +989,7 @@ def find_reviewed_anchors_between(
             in eligible
         )
 
-        same_time_group = [
+        same_time = [
             item
             for item
             in eligible
@@ -1010,10 +998,8 @@ def find_reviewed_anchors_between(
             ] == earliest_index
         ]
 
-        # At the same representative time, use the best-supported
-        # and then the highest candidate.
         best = max(
-            same_time_group,
+            same_time,
             key=lambda item:
             (
                 item[
@@ -1044,41 +1030,236 @@ def find_reviewed_anchors_between(
     return reviewed
 
 
-# ============================================================
-# NEW:
-# MONOTONIC TRACKER WITH 3-OF-5 CONFIRMATION
-# ============================================================
 
-def build_monotonic_tracked_curve(
-    time_s,
-    raw_height_mm,
-    confidence_percent
+def find_actual_onset_backtrack(
+    raw_heights,
+    raw_confidence_percent,
+    raw_wetting_scores,
+    first_confirmed_index,
+    first_confirmed_height
 ):
     """
-    Monotonic capillary-front reconstruction.
+    Recover earlier ACTUAL raw frame detections if they form a
+    physically continuous trajectory into the first accepted
+    positive measurement.
 
-    New levels are NOT accepted from a single high value.
-
-    A new height must be supported by at least:
-
-        3 out of 5 consecutive frames
-
-    within:
-
-        +/- TRACK_CONFIRM_TOLERANCE_MM
-
-    and all supporting frames must satisfy the confidence
-    threshold.
-
-    Lower later detections are ignored after a level has been
-    confirmed.
-
-    Between confirmed anchors, linear interpolation is used
-    when TRACK_INTERPOLATE_BETWEEN_ANCHORS=True.
+    Missing frames remain missing. No height is calculated.
     """
 
-    time_s = np.asarray(
-        time_s,
+    raw_heights = np.asarray(
+        raw_heights,
+        dtype=np.float64
+    )
+
+    raw_confidence_percent = np.asarray(
+        raw_confidence_percent,
+        dtype=np.float64
+    )
+
+    raw_wetting_scores = np.asarray(
+        raw_wetting_scores,
+        dtype=np.float64
+    )
+
+    if not (
+        len(
+            raw_heights
+        )
+        ==
+        len(
+            raw_confidence_percent
+        )
+        ==
+        len(
+            raw_wetting_scores
+        )
+    ):
+        raise ValueError(
+            "Onset-backtracking arrays must have equal length."
+        )
+
+    first_confirmed_index = int(
+        first_confirmed_index
+    )
+
+    current_index = int(
+        first_confirmed_index
+    )
+
+    current_height = float(
+        first_confirmed_height
+    )
+
+    search_start = max(
+        1,
+        first_confirmed_index
+        - int(
+            TRACK_ONSET_BACKTRACK_FRAMES
+        )
+    )
+
+    records_backwards = []
+
+    consecutive_misses = 0
+
+    found_any = False
+
+    for frame_index in range(
+        first_confirmed_index - 1,
+        search_start - 1,
+        -1
+    ):
+
+        height = float(
+            raw_heights[
+                frame_index
+            ]
+        )
+
+        confidence = float(
+            raw_confidence_percent[
+                frame_index
+            ]
+        )
+
+        wetting_score = float(
+            raw_wetting_scores[
+                frame_index
+            ]
+        )
+
+        frame_gap = (
+            current_index
+            - frame_index
+        )
+
+        maximum_allowed_rise = (
+            TRACK_ONSET_BACKTRACK_MAX_RISE_PER_FRAME_MM
+            * frame_gap
+            + TRACK_CONFIRM_TOLERANCE_MM
+        )
+
+        valid_candidate = (
+            np.isfinite(
+                height
+            )
+            and
+            np.isfinite(
+                confidence
+            )
+            and
+            np.isfinite(
+                wetting_score
+            )
+            and
+            confidence
+            >= TRACK_ONSET_BACKTRACK_MIN_CONFIDENCE_PERCENT
+            and
+            wetting_score
+            >= TRACK_ONSET_BACKTRACK_MIN_WETTING_SCORE
+            and
+            height
+            >= TRACK_ONSET_MIN_HEIGHT_MM
+            and
+            height
+            <= current_height
+            + 1e-9
+            and
+            (
+                current_height
+                - height
+            )
+            <= maximum_allowed_rise
+        )
+
+        if not valid_candidate:
+
+            consecutive_misses += 1
+
+            if (
+                found_any
+                and
+                consecutive_misses
+                > TRACK_ONSET_BACKTRACK_MAX_CONSECUTIVE_MISSES
+            ):
+                break
+
+            continue
+
+        records_backwards.append(
+            {
+                "anchor_index":
+                    int(
+                        frame_index
+                    ),
+
+                "height":
+                    float(
+                        height
+                    ),
+
+                "cluster_median":
+                    np.nan,
+
+                "support_indices":
+                    np.asarray(
+                        [
+                            frame_index
+                        ],
+                        dtype=int
+                    ),
+
+                "support_count":
+                    1,
+
+                "type":
+                    "onset_reviewed"
+            }
+        )
+
+        current_index = int(
+            frame_index
+        )
+
+        current_height = float(
+            height
+        )
+
+        consecutive_misses = 0
+
+        found_any = True
+
+    records_backwards.reverse()
+
+    return records_backwards
+
+
+
+
+def build_final_measured_series(
+    height_validated_mm,
+    confirmation_records,
+    raw_height_mm
+):
+    """
+    Build the high-resolution FINAL MEASURED series.
+
+    Every finite value in the returned series is an ACTUAL
+    frame-derived value, except frame 0 which is the explicit
+    experimental initial condition of 0 mm.
+
+    Rules
+    -----
+    1. Keep every temporally validated actual frame measurement.
+    2. Add retrospectively accepted onset measurements only from
+       their exact original raw frame values.
+    3. Never interpolate, reconstruct, smooth, forward-fill, or
+       calculate missing temporal measurements.
+    4. Unresolved frames remain np.nan.
+    """
+
+    height_validated_mm = np.asarray(
+        height_validated_mm,
         dtype=np.float64
     )
 
@@ -1087,13 +1268,136 @@ def build_monotonic_tracked_curve(
         dtype=np.float64
     )
 
-    confidence_percent = np.asarray(
-        confidence_percent,
+    if len(
+        height_validated_mm
+    ) != len(
+        raw_height_mm
+    ):
+        raise ValueError(
+            "Validated and raw height arrays must have equal length."
+        )
+
+    n = len(
+        height_validated_mm
+    )
+
+    # Start from every actual temporally validated observation.
+    final_measured = (
+        height_validated_mm.copy()
+    )
+
+    source = np.full(
+        n,
+        "",
+        dtype=object
+    )
+
+    validated_mask = np.isfinite(
+        final_measured
+    )
+
+    source[
+        validated_mask
+    ] = "validated"
+
+    # Explicit experimental initial condition.
+    if n > 0:
+
+        final_measured[
+            0
+        ] = float(
+            TRACK_INITIAL_HEIGHT_MM
+        )
+
+        source[
+            0
+        ] = "initial_condition"
+
+    # Retrospective onset review may recover an actual raw
+    # observation that did not pass the normal temporal threshold.
+    # Use the exact raw value from that frame; do not use a cluster
+    # average or any derived/interpolated height.
+    for record in confirmation_records:
+
+        if record.get(
+            "type"
+        ) != "onset_reviewed":
+            continue
+
+        frame_index = int(
+            record[
+                "anchor_index"
+            ]
+        )
+
+        if (
+            frame_index < 0
+            or
+            frame_index >= n
+        ):
+            continue
+
+        raw_value = float(
+            raw_height_mm[
+                frame_index
+            ]
+        )
+
+        if not np.isfinite(
+            raw_value
+        ):
+            continue
+
+        final_measured[
+            frame_index
+        ] = raw_value
+
+        source[
+            frame_index
+        ] = "onset_reviewed_raw"
+
+    return (
+        final_measured,
+        source
+    )
+
+
+def build_monotonic_tracked_curve(
+    time_s,
+    validated_height_mm,
+    validated_confidence_percent,
+    raw_height_mm=None,
+    raw_confidence_percent=None,
+    raw_wetting_score=None
+):
+    """
+    Measurement-only monotonic tracker.
+
+    No temporal interpolation.
+    No step holding.
+    No reconstructed heights.
+
+    `tracked` contains values only where an actual frame-derived
+    measurement was accepted. Unresolved frames are np.nan.
+    """
+
+    time_s = np.asarray(
+        time_s,
+        dtype=np.float64
+    )
+
+    validated_height_mm = np.asarray(
+        validated_height_mm,
+        dtype=np.float64
+    )
+
+    validated_confidence_percent = np.asarray(
+        validated_confidence_percent,
         dtype=np.float64
     )
 
     n = len(
-        raw_height_mm
+        validated_height_mm
     )
 
     if n == 0:
@@ -1111,25 +1415,17 @@ def build_monotonic_tracked_curve(
         )
 
     if not (
-        len(time_s) == n
+        len(
+            time_s
+        ) == n
         and
-        len(confidence_percent) == n
+        len(
+            validated_confidence_percent
+        ) == n
     ):
-
         raise ValueError(
             "Tracking arrays must have equal length."
         )
-
-    # --------------------------------------------------------
-    # INITIAL LEVEL
-    #
-    # The physical tracked curve starts at 0 mm.
-    #
-    # Do NOT use raw_height_mm[0] here. Before the wetting front
-    # exists, the raw image detector still has to return the
-    # strongest edge somewhere, and that edge can be a static
-    # feature close to the liquid level.
-    # --------------------------------------------------------
 
     anchor_indices = [
         0
@@ -1141,7 +1437,7 @@ def build_monotonic_tracked_curve(
         )
     ]
 
-    confirmation_records = [
+    records = [
         {
             "anchor_index":
                 0,
@@ -1151,9 +1447,14 @@ def build_monotonic_tracked_curve(
                     TRACK_INITIAL_HEIGHT_MM
                 ),
 
+            "cluster_median":
+                np.nan,
+
             "support_indices":
-                np.array(
-                    [0],
+                np.asarray(
+                    [
+                        0
+                    ],
                     dtype=int
                 ),
 
@@ -1169,10 +1470,6 @@ def build_monotonic_tracked_curve(
         TRACK_INITIAL_HEIGHT_MM
     )
 
-    # --------------------------------------------------------
-    # Scan every possible 5-frame consecutive window.
-    # --------------------------------------------------------
-
     window_size = int(
         TRACK_CONFIRM_WINDOW
     )
@@ -1181,26 +1478,17 @@ def build_monotonic_tracked_curve(
         TRACK_CONFIRM_REQUIRED
     )
 
-    if window_size < 1:
-
+    if (
+        window_size < 1
+        or
+        required < 1
+        or
+        required > window_size
+    ):
         raise ValueError(
-            "TRACK_CONFIRM_WINDOW must be >= 1."
+            "Invalid tracking confirmation settings."
         )
 
-    if required < 1:
-
-        raise ValueError(
-            "TRACK_CONFIRM_REQUIRED must be >= 1."
-        )
-
-    if required > window_size:
-
-        raise ValueError(
-            "TRACK_CONFIRM_REQUIRED cannot exceed "
-            "TRACK_CONFIRM_WINDOW."
-        )
-
-    # Last valid complete window starts here.
     last_start = (
         n
         - window_size
@@ -1218,29 +1506,19 @@ def build_monotonic_tracked_curve(
                 + window_size
             )
 
-            heights_window = (
-                raw_height_mm[
-                    start:end
-                ]
-            )
-
-            confidence_window = (
-                confidence_percent[
-                    start:end
-                ]
-            )
-
-            global_indices = np.arange(
-                start,
-                end,
-                dtype=int
-            )
-
             confirmed = (
                 find_confirmed_level_in_window(
-                    heights_window,
-                    confidence_window,
-                    global_indices,
+                    validated_height_mm[
+                        start:end
+                    ],
+                    validated_confidence_percent[
+                        start:end
+                    ],
+                    np.arange(
+                        start,
+                        end,
+                        dtype=int
+                    ),
                     current_height
                 )
             )
@@ -1248,27 +1526,23 @@ def build_monotonic_tracked_curve(
             if confirmed is None:
                 continue
 
-            confirmed_height = (
+            confirmed_height = float(
                 confirmed[
                     "height"
                 ]
             )
 
-            anchor_index = (
+            anchor_index = int(
                 confirmed[
                     "anchor_index"
                 ]
             )
 
-            # ------------------------------------------------
-            # Safety:
-            # never add an anchor before or at the previous
-            # anchor.
-            # ------------------------------------------------
-
             if (
                 anchor_index
-                <= anchor_indices[-1]
+                <= anchor_indices[
+                    -1
+                ]
             ):
                 continue
 
@@ -1278,17 +1552,6 @@ def build_monotonic_tracked_curve(
                 + TRACK_MIN_RISE_MM
             ):
                 continue
-
-            # ------------------------------------------------
-            # LARGE-JUMP REVIEW
-            #
-            # A sudden strong confirmation can mean that the
-            # detector intermittently saw the true front earlier
-            # but failed the strict 3-of-5 rule.
-            #
-            # Review that interval using ONLY the temporally
-            # validated wetting-front candidates.
-            # ------------------------------------------------
 
             if (
                 confirmed_height
@@ -1296,67 +1559,75 @@ def build_monotonic_tracked_curve(
                 >= TRACK_REVIEW_TRIGGER_MM
             ):
 
-                reviewed_anchors = (
+                reviewed = (
                     find_reviewed_anchors_between(
-                        raw_height_mm,
-                        confidence_percent,
-                        anchor_indices[-1],
+                        validated_height_mm,
+                        validated_confidence_percent,
+                        anchor_indices[
+                            -1
+                        ],
                         current_height,
                         anchor_index,
                         confirmed_height
                     )
                 )
 
-                for reviewed in reviewed_anchors:
+                for item in reviewed:
 
-                    reviewed_index = int(
-                        reviewed[
+                    item_index = int(
+                        item[
                             "anchor_index"
                         ]
                     )
 
-                    reviewed_height = float(
-                        reviewed[
+                    item_height = float(
+                        item[
                             "height"
                         ]
                     )
 
                     if (
-                        reviewed_index
-                        <= anchor_indices[-1]
+                        item_index
+                        <= anchor_indices[
+                            -1
+                        ]
                     ):
                         continue
 
                     if (
-                        reviewed_height
+                        item_height
                         <= current_height
                         + TRACK_REVIEW_MIN_RISE_MM
                     ):
                         continue
 
+                    if (
+                        item_height
+                        >= confirmed_height
+                    ):
+                        continue
+
                     anchor_indices.append(
-                        reviewed_index
+                        item_index
                     )
 
                     anchor_heights.append(
-                        reviewed_height
+                        item_height
                     )
 
-                    confirmation_records.append(
-                        reviewed
+                    records.append(
+                        item
                     )
 
                     current_height = float(
-                        reviewed_height
+                        item_height
                     )
-
-            # ------------------------------------------------
-            # Append the strong 3-of-5 anchor itself.
-            # ------------------------------------------------
 
             if (
                 anchor_index
-                <= anchor_indices[-1]
+                <= anchor_indices[
+                    -1
+                ]
             ):
                 continue
 
@@ -1365,25 +1636,17 @@ def build_monotonic_tracked_curve(
                 < current_height
                 + TRACK_MIN_RISE_MM
             ):
-                # A reviewed anchor may already explain nearly
-                # the whole jump. In that case the strong anchor
-                # is still useful as evidence, but there is no
-                # need to create a near-duplicate tracking point.
                 continue
 
             anchor_indices.append(
-                int(
-                    anchor_index
-                )
+                anchor_index
             )
 
             anchor_heights.append(
-                float(
-                    confirmed_height
-                )
+                confirmed_height
             )
 
-            confirmation_records.append(
+            records.append(
                 confirmed
             )
 
@@ -1392,94 +1655,185 @@ def build_monotonic_tracked_curve(
             )
 
     # --------------------------------------------------------
-    # Convert to arrays.
+    # Retrospective onset review using actual raw measurements.
     # --------------------------------------------------------
 
-    anchor_indices = np.asarray(
-        anchor_indices,
-        dtype=int
-    )
-
-    anchor_heights = np.asarray(
-        anchor_heights,
-        dtype=np.float64
-    )
-
-    # --------------------------------------------------------
-    # Ensure anchors are in chronological order.
-    # --------------------------------------------------------
-
-    order = np.argsort(
-        anchor_indices
-    )
-
-    anchor_indices = (
-        anchor_indices[
-            order
-        ]
-    )
-
-    anchor_heights = (
-        anchor_heights[
-            order
-        ]
-    )
-
-    # --------------------------------------------------------
-    # Remove duplicate anchor indices if any.
-    # Keep highest confirmed height at a duplicate time.
-    # --------------------------------------------------------
-
-    unique_indices = []
-
-    unique_heights = []
-
-    for index, height in zip(
-        anchor_indices,
-        anchor_heights
-    ):
+    positive_records = [
+        record
+        for record
+        in records
 
         if (
-            unique_indices
+            int(
+                record[
+                    "anchor_index"
+                ]
+            )
+            > 0
             and
-            index
-            == unique_indices[-1]
-        ):
-
-            unique_heights[-1] = max(
-                unique_heights[-1],
-                float(
-                    height
-                )
+            float(
+                record[
+                    "height"
+                ]
             )
+            > TRACK_INITIAL_HEIGHT_MM
+            + 1e-9
+        )
+    ]
 
-        else:
+    if (
+        positive_records
+        and
+        raw_height_mm is not None
+        and
+        raw_confidence_percent is not None
+        and
+        raw_wetting_score is not None
+    ):
 
-            unique_indices.append(
-                int(
+        first_positive = min(
+            positive_records,
+            key=lambda record:
+            int(
+                record[
+                    "anchor_index"
+                ]
+            )
+        )
+
+        onset_records = (
+            find_actual_onset_backtrack(
+                raw_height_mm,
+                raw_confidence_percent,
+                raw_wetting_score,
+                first_positive[
+                    "anchor_index"
+                ],
+                first_positive[
+                    "height"
+                ]
+            )
+        )
+
+        records.extend(
+            onset_records
+        )
+
+    # --------------------------------------------------------
+    # Deduplicate same-frame records.
+    # --------------------------------------------------------
+
+    priority = {
+        "initial":
+            0,
+
+        "onset_reviewed":
+            1,
+
+        "reviewed":
+            2,
+
+        "confirmed":
+            3
+    }
+
+    by_index = {}
+
+    for record in records:
+
+        index = int(
+            record[
+                "anchor_index"
+            ]
+        )
+
+        if (
+            index not in by_index
+            or
+            priority.get(
+                record.get(
+                    "type",
+                    ""
+                ),
+                -1
+            )
+            >
+            priority.get(
+                by_index[
                     index
-                )
+                ].get(
+                    "type",
+                    ""
+                ),
+                -1
+            )
+        ):
+            by_index[
+                index
+            ] = record
+
+    records = [
+        by_index[
+            index
+        ]
+        for index
+        in sorted(
+            by_index
+        )
+    ]
+
+    # --------------------------------------------------------
+    # Monotonic acceptance is enforced by rejecting inconsistent
+    # observations. Measurements are never altered.
+    # --------------------------------------------------------
+
+    accepted_records = []
+
+    last_height = -np.inf
+
+    for record in records:
+
+        index = int(
+            record[
+                "anchor_index"
+            ]
+        )
+
+        height = float(
+            record[
+                "height"
+            ]
+        )
+
+        if index == 0:
+
+            accepted_records.append(
+                record
             )
 
-            unique_heights.append(
-                float(
-                    height
-                )
-            )
+            last_height = height
 
-    anchor_indices = np.asarray(
-        unique_indices,
-        dtype=int
-    )
+            continue
 
-    anchor_heights = np.asarray(
-        unique_heights,
+        if (
+            height
+            + 1e-9
+            < last_height
+        ):
+            continue
+
+        accepted_records.append(
+            record
+        )
+
+        last_height = height
+
+    records = accepted_records
+
+    tracked = np.full(
+        n,
+        np.nan,
         dtype=np.float64
-    )
-
-    # Physically irreversible:
-    anchor_heights = np.maximum.accumulate(
-        anchor_heights
     )
 
     anchor_mask = np.zeros(
@@ -1487,293 +1841,39 @@ def build_monotonic_tracked_curve(
         dtype=bool
     )
 
-    anchor_mask[
-        anchor_indices
-    ] = True
+    for record in records:
 
-    # --------------------------------------------------------
-    # CONSTRUCT TRACKED CURVE
-    #
-    # CRITICAL INITIAL-CONDITION RULE:
-    #
-    # Do NOT interpolate from frame 0 to the first positive
-    # confirmed anchor. Doing that invents a gradual capillary
-    # rise during frames in which no rise was observed.
-    #
-    # Instead:
-    #   1. hold the curve at exactly 0 mm;
-    #   2. locate the first confirmed positive cluster;
-    #   3. begin interpolation only around the first supporting
-    #      frames of that cluster;
-    #   4. continue normal interpolation between later anchors.
-    # --------------------------------------------------------
-
-    positive_mask = (
-        anchor_heights
-        >
-        TRACK_INITIAL_HEIGHT_MM
-        + 1e-9
-    )
-
-    positive_anchor_indices = (
-        anchor_indices[
-            positive_mask
-        ]
-    )
-
-    positive_anchor_heights = (
-        anchor_heights[
-            positive_mask
-        ]
-    )
-
-    if len(
-        positive_anchor_indices
-    ) == 0:
-
-        # No real rise was ever confirmed.
-        tracked = np.full(
-            n,
-            float(
-                TRACK_INITIAL_HEIGHT_MM
-            ),
-            dtype=np.float64
+        index = int(
+            record[
+                "anchor_index"
+            ]
         )
 
-    elif (
-        TRACK_INTERPOLATE_BETWEEN_ANCHORS
-    ):
-
-        first_positive_index = int(
-            positive_anchor_indices[0]
-        )
-
-        # Default to the frame immediately before the first
-        # positive anchor.
-        onset_zero_index = max(
-            0,
-            first_positive_index - 1
-        )
-
-        # If possible, use the beginning of the actual 3-of-5
-        # support cluster. This limits the reconstructed onset to
-        # the short interval in which evidence for the front
-        # first appears, instead of spreading it backwards over
-        # the whole beginning of the video.
-        for record in confirmation_records:
-
-            if (
-                int(
-                    record[
-                        "anchor_index"
-                    ]
-                )
-                == first_positive_index
-                and
-                float(
-                    record[
-                        "height"
-                    ]
-                )
-                >
-                TRACK_INITIAL_HEIGHT_MM
-                + 1e-9
-            ):
-
-                support_indices = np.asarray(
-                    record[
-                        "support_indices"
-                    ],
-                    dtype=int
-                )
-
-                if len(
-                    support_indices
-                ) > 0:
-
-                    onset_zero_index = max(
-                        0,
-                        int(
-                            np.min(
-                                support_indices
-                            )
-                        )
-                        - 1
-                    )
-
-                break
-
-        # The zero anchor must remain strictly before the first
-        # positive anchor.
-        onset_zero_index = min(
-            onset_zero_index,
-            max(
-                0,
-                first_positive_index - 1
-            )
-        )
-
-        interpolation_indices = np.concatenate(
-            (
-                np.asarray(
-                    [
-                        onset_zero_index
-                    ],
-                    dtype=int
-                ),
-                positive_anchor_indices
-            )
-        )
-
-        interpolation_heights = np.concatenate(
-            (
-                np.asarray(
-                    [
-                        float(
-                            TRACK_INITIAL_HEIGHT_MM
-                        )
-                    ],
-                    dtype=np.float64
-                ),
-                positive_anchor_heights
-            )
-        )
-
-        # Remove a duplicate index if the first positive anchor
-        # somehow occurs immediately at the zero anchor.
-        clean_indices = []
-        clean_heights = []
-
-        for index, height in zip(
-            interpolation_indices,
-            interpolation_heights
+        if (
+            index < 0
+            or
+            index >= n
         ):
-
-            index = int(
-                index
-            )
-
-            height = float(
-                height
-            )
-
-            if (
-                clean_indices
-                and
-                index
-                == clean_indices[-1]
-            ):
-
-                clean_heights[-1] = max(
-                    clean_heights[-1],
-                    height
-                )
-
-            else:
-
-                clean_indices.append(
-                    index
-                )
-
-                clean_heights.append(
-                    height
-                )
-
-        interpolation_indices = np.asarray(
-            clean_indices,
-            dtype=int
-        )
-
-        interpolation_heights = np.asarray(
-            clean_heights,
-            dtype=np.float64
-        )
-
-        interpolation_heights = np.maximum.accumulate(
-            interpolation_heights
-        )
-
-        tracked = np.full(
-            n,
-            float(
-                TRACK_INITIAL_HEIGHT_MM
-            ),
-            dtype=np.float64
-        )
-
-        start_index = int(
-            interpolation_indices[0]
-        )
+            continue
 
         tracked[
-            start_index:
-        ] = np.interp(
-            time_s[
-                start_index:
-            ],
-            time_s[
-                interpolation_indices
-            ],
-            interpolation_heights
+            index
+        ] = float(
+            record[
+                "height"
+            ]
         )
 
-    else:
-
-        # Step-wise monotonic tracker:
-        # zero until the first confirmed positive anchor, then
-        # hold each confirmed level until the next one.
-        tracked = np.full(
-            n,
-            float(
-                TRACK_INITIAL_HEIGHT_MM
-            ),
-            dtype=np.float64
-        )
-
-        current = float(
-            TRACK_INITIAL_HEIGHT_MM
-        )
-
-        anchor_pointer = 0
-
-        for i in range(n):
-
-            while (
-                anchor_pointer
-                < len(
-                    positive_anchor_indices
-                )
-                and
-                i
-                >= positive_anchor_indices[
-                    anchor_pointer
-                ]
-            ):
-
-                current = float(
-                    positive_anchor_heights[
-                        anchor_pointer
-                    ]
-                )
-
-                anchor_pointer += 1
-
-            tracked[i] = current
-
-    tracked = np.maximum.accumulate(
-        tracked
-    )
+        anchor_mask[
+            index
+        ] = True
 
     return (
         tracked,
         anchor_mask,
-        confirmation_records
+        records
     )
 
-
-# ============================================================
-# RULER DETECTION
-# ============================================================
 
 def detect_rulers(image):
 
@@ -4826,6 +4926,35 @@ def detect_liquid_front(
         robust_scale
     )
 
+    # Preserve temporal evidence for the actual strongest edge,
+    # even when it fails the normal wetting threshold. This is
+    # used only for retrospective onset review.
+    raw_wetting = evaluate_wetting_candidate(
+        raw_local_front,
+        profile_smooth,
+        baseline_profile,
+        pixels_per_mm,
+        baseline_noise
+    )
+
+    raw_wetting_step = float(
+        raw_wetting[
+            "step"
+        ]
+    )
+
+    raw_wetting_score = float(
+        raw_wetting[
+            "score"
+        ]
+    )
+
+    raw_wetting_valid = bool(
+        raw_wetting[
+            "valid"
+        ]
+    )
+
     # --------------------------------------------------------
     # Generate several possible spatial edges.
     # --------------------------------------------------------
@@ -5029,6 +5158,21 @@ def detect_liquid_front(
         "raw_confidence_score":
             float(
                 raw_confidence_score
+            ),
+
+        "raw_wetting_step_L":
+            float(
+                raw_wetting_step
+            ),
+
+        "raw_wetting_score":
+            float(
+                raw_wetting_score
+            ),
+
+        "raw_wetting_valid":
+            bool(
+                raw_wetting_valid
             ),
 
         "validated_y":
@@ -5266,6 +5410,7 @@ def draw_static_geometry(
 # DRAW TRACKED FRONT
 # ============================================================
 
+
 def draw_front_overlay(
     image,
     left_sample_line,
@@ -5274,16 +5419,95 @@ def draw_front_overlay(
     height_mm,
     nearest_line,
     confidence_score,
-    time_s
+    time_s,
+    measurement_label="measured height"
 ):
 
     out = image.copy()
 
     h, w = out.shape[:2]
 
-    confidence_percent = (
-        confidence_score_to_percent(
-            confidence_score
+    font_scale = max(
+        0.65,
+        w / 1300.0
+    )
+
+    thickness = max(
+        2,
+        int(
+            w / 900
+        )
+    )
+
+    x_text = int(
+        0.02
+        * w
+    )
+
+    y_text = int(
+        0.04
+        * h
+    )
+
+    step = int(
+        0.035
+        * h
+    )
+
+    cv2.putText(
+        out,
+        f"time = {time_s:.2f} s",
+        (
+            x_text,
+            y_text
+        ),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        (255, 255, 255),
+        thickness,
+        cv2.LINE_AA
+    )
+
+    if (
+        y_front is None
+        or
+        height_mm is None
+        or
+        not np.isfinite(
+            float(
+                y_front
+            )
+        )
+        or
+        not np.isfinite(
+            float(
+                height_mm
+            )
+        )
+    ):
+
+        cv2.putText(
+            out,
+            "height = unresolved",
+            (
+                x_text,
+                y_text
+                + step
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (0, 255, 255),
+            thickness,
+            cv2.LINE_AA
+        )
+
+        return out
+
+    y_front = int(
+        round(
+            float(
+                y_front
+            )
         )
     )
 
@@ -5337,56 +5561,16 @@ def draw_front_overlay(
             -1
         )
 
-    font_scale = max(
-        0.65,
-        w / 1300.0
-    )
-
-    thickness = max(
-        2,
-        int(
-            w / 900
-        )
-    )
-
-    x_text = int(
-        0.02
-        * w
-    )
-
-    y_text = int(
-        0.04
-        * h
-    )
-
-    step = int(
-        0.035
-        * h
-    )
-
     cv2.putText(
         out,
-        f"time = {time_s:.2f} s",
+        (
+            f"{measurement_label} = "
+            f"{float(height_mm):.2f} mm"
+        ),
         (
             x_text,
             y_text
-        ),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale,
-        (255, 255, 255),
-        thickness,
-        cv2.LINE_AA
-    )
-
-    cv2.putText(
-        out,
-        (
-            f"tracked height = "
-            f"{height_mm:.2f} mm"
-        ),
-        (
-            x_text,
-            y_text + step
+            + step
         ),
         cv2.FONT_HERSHEY_SIMPLEX,
         font_scale,
@@ -5406,28 +5590,38 @@ def draw_front_overlay(
             (
                 x_text,
                 y_text
-                + 2 * step
+                + 2
+                * step
             ),
             cv2.FONT_HERSHEY_SIMPLEX,
-            font_scale * 0.8,
+            font_scale
+            * 0.8,
             (0, 255, 255),
             thickness,
             cv2.LINE_AA
         )
 
+    confidence_percent = (
+        confidence_score_to_percent(
+            confidence_score
+        )
+    )
+
     cv2.putText(
         out,
         (
-            f"validated detection confidence = "
+            f"detection confidence = "
             f"{confidence_percent:.1f}%"
         ),
         (
             x_text,
             y_text
-            + 3 * step
+            + 3
+            * step
         ),
         cv2.FONT_HERSHEY_SIMPLEX,
-        font_scale * 0.75,
+        font_scale
+        * 0.75,
         (0, 0, 255),
         thickness,
         cv2.LINE_AA
@@ -5436,9 +5630,6 @@ def draw_front_overlay(
     return out
 
 
-# ============================================================
-# SAVE VIDEO CSV
-# ============================================================
 
 def save_video_csv(
     output_path,
@@ -5462,11 +5653,14 @@ def save_video_csv(
                 "front_y_raw_px",
                 "front_y_validated_px",
                 "front_y_smoothed_px",
-                "front_y_tracked_px",
+                "front_y_tracking_anchor_px",
+                "front_y_final_measured_px",
                 "height_raw_mm",
                 "height_validated_mm",
                 "height_smoothed_mm",
-                "height_tracked_mm",
+                "height_tracking_anchor_mm",
+                "height_final_measured_mm",
+                "final_measurement_source",
                 "wetting_detected",
                 "wetting_step_L",
                 "wetting_score",
@@ -5476,7 +5670,11 @@ def save_video_csv(
                 "confidence_score_raw",
                 "detection_confidence_percent",
                 "validated_confidence_score_raw",
-                "validated_detection_confidence_percent"
+                "validated_detection_confidence_percent",
+                "raw_wetting_step_L",
+                "raw_wetting_score",
+                "raw_wetting_valid",
+                "tracking_type"
             ]
         )
 
@@ -5504,7 +5702,25 @@ def save_video_csv(
 
                     f"{row['front_y_smoothed']:.3f}",
 
-                    f"{row['front_y_tracked']:.3f}",
+                    (
+                        f"{row['front_y_tracked']:.3f}"
+                        if np.isfinite(
+                            row[
+                                "front_y_tracked"
+                            ]
+                        )
+                        else ""
+                    ),
+
+                    (
+                        f"{row['front_y_final_measured']:.3f}"
+                        if np.isfinite(
+                            row[
+                                "front_y_final_measured"
+                            ]
+                        )
+                        else ""
+                    ),
 
                     f"{row['height_raw_mm']:.6f}",
 
@@ -5520,7 +5736,29 @@ def save_video_csv(
 
                     f"{row['height_smoothed_mm']:.6f}",
 
-                    f"{row['height_tracked_mm']:.6f}",
+                    (
+                        f"{row['height_tracked_mm']:.6f}"
+                        if np.isfinite(
+                            row[
+                                "height_tracked_mm"
+                            ]
+                        )
+                        else ""
+                    ),
+
+                    (
+                        f"{row['height_final_measured_mm']:.6f}"
+                        if np.isfinite(
+                            row[
+                                "height_final_measured_mm"
+                            ]
+                        )
+                        else ""
+                    ),
+
+                    row[
+                        "final_measurement_source"
+                    ],
 
                     int(
                         row[
@@ -5542,7 +5780,15 @@ def save_video_csv(
                         ]
                     ),
 
-                    f"{row['nearest_ruler_mm']:.3f}",
+                    (
+                        f"{row['nearest_ruler_mm']:.3f}"
+                        if np.isfinite(
+                            row[
+                                "nearest_ruler_mm"
+                            ]
+                        )
+                        else ""
+                    ),
 
                     f"{row['confidence_score']:.6f}",
 
@@ -5550,14 +5796,25 @@ def save_video_csv(
 
                     f"{row['validated_confidence_score']:.6f}",
 
-                    f"{row['validated_confidence_percent']:.3f}"
+                    f"{row['validated_confidence_percent']:.3f}",
+
+                    f"{row['raw_wetting_step_L']:.6f}",
+
+                    f"{row['raw_wetting_score']:.6f}",
+
+                    int(
+                        row[
+                            "raw_wetting_valid"
+                        ]
+                    ),
+
+                    row[
+                        "tracking_type"
+                    ]
                 ]
             )
 
 
-# ============================================================
-# INDIVIDUAL PLOT
-# ============================================================
 
 def save_individual_plot(
     output_path,
@@ -5571,8 +5828,10 @@ def save_individual_plot(
             row[
                 "time_s"
             ]
-            for row in results
-        ]
+            for row
+            in results
+        ],
+        dtype=np.float64
     )
 
     raw = np.asarray(
@@ -5580,17 +5839,10 @@ def save_individual_plot(
             row[
                 "height_raw_mm"
             ]
-            for row in results
-        ]
-    )
-
-    smoothed = np.asarray(
-        [
-            row[
-                "height_smoothed_mm"
-            ]
-            for row in results
-        ]
+            for row
+            in results
+        ],
+        dtype=np.float64
     )
 
     validated = np.asarray(
@@ -5598,38 +5850,32 @@ def save_individual_plot(
             row[
                 "height_validated_mm"
             ]
-            for row in results
+            for row
+            in results
         ],
         dtype=np.float64
     )
 
-    wetting_mask = np.asarray(
+    final_measured = np.asarray(
         [
             row[
-                "wetting_detected"
+                "height_final_measured_mm"
             ]
-            for row in results
+            for row
+            in results
         ],
-        dtype=bool
+        dtype=np.float64
     )
 
-    tracked = np.asarray(
+    anchors = np.asarray(
         [
             row[
                 "height_tracked_mm"
             ]
-            for row in results
-        ]
-    )
-
-    anchor_mask = np.asarray(
-        [
-            row[
-                "tracking_anchor"
-            ]
-            for row in results
+            for row
+            in results
         ],
-        dtype=bool
+        dtype=np.float64
     )
 
     fig, ax = plt.subplots(
@@ -5643,49 +5889,56 @@ def save_individual_plot(
         times,
         raw,
         linestyle="-",
-        linewidth=0.8,
-        alpha=0.45,
-        label="Raw"
+        linewidth=0.7,
+        alpha=0.25,
+        label="Raw strongest edge"
     )
 
-    ax.plot(
-        times,
-        smoothed,
-        linestyle="--",
-        linewidth=1.2,
-        alpha=0.75,
-        label="Centred median"
+    validated_mask = np.isfinite(
+        validated
     )
 
     ax.scatter(
         times[
-            wetting_mask
+            validated_mask
         ],
         validated[
-            wetting_mask
+            validated_mask
         ],
-        s=8,
-        alpha=0.55,
-        label="Temporally validated front"
+        s=5,
+        alpha=0.20,
+        label="Temporally validated actual measurements"
     )
 
-    ax.plot(
-        times,
-        tracked,
-        linestyle="-",
-        linewidth=2.2,
-        label="Tracked hybrid front"
+    final_mask = np.isfinite(
+        final_measured
+    )
+
+    ax.scatter(
+        times[
+            final_mask
+        ],
+        final_measured[
+            final_mask
+        ],
+        s=8,
+        alpha=0.85,
+        label="Final actual measured series"
+    )
+
+    anchor_mask = np.isfinite(
+        anchors
     )
 
     ax.scatter(
         times[
             anchor_mask
         ],
-        tracked[
+        anchors[
             anchor_mask
         ],
-        s=18,
-        label="Confirmed tracking anchors"
+        s=24,
+        label="Confirmation / review anchors"
     )
 
     ax.set_xlabel(
@@ -5720,24 +5973,12 @@ def save_individual_plot(
 
 
 
-# ============================================================
-# ONSET DIAGNOSTIC PLOT
-# ============================================================
-
 def save_onset_diagnostic_plot(
     output_path,
     folder_name,
     video_name,
     results
 ):
-    """
-    Save an enlarged view of the first two seconds.
-
-    This makes onset behaviour auditable:
-        - old strongest spatial edge,
-        - temporally validated wetting candidates,
-        - final tracked curve.
-    """
 
     if not results:
         return
@@ -5775,7 +6016,18 @@ def save_onset_diagnostic_plot(
         dtype=np.float64
     )
 
-    tracked = np.asarray(
+    final_measured = np.asarray(
+        [
+            row[
+                "height_final_measured_mm"
+            ]
+            for row
+            in results
+        ],
+        dtype=np.float64
+    )
+
+    anchors = np.asarray(
         [
             row[
                 "height_tracked_mm"
@@ -5786,23 +6038,14 @@ def save_onset_diagnostic_plot(
         dtype=np.float64
     )
 
-    wetting = np.asarray(
-        [
-            row[
-                "wetting_detected"
-            ]
-            for row
-            in results
-        ],
-        dtype=bool
-    )
-
-    mask = (
+    time_mask = (
         times
         <= min(
             2.0,
             float(
-                times[-1]
+                times[
+                    -1
+                ]
             )
         )
     )
@@ -5816,20 +6059,18 @@ def save_onset_diagnostic_plot(
 
     ax.plot(
         times[
-            mask
+            time_mask
         ],
         raw[
-            mask
+            time_mask
         ],
         linewidth=0.8,
-        alpha=0.45,
+        alpha=0.35,
         label="Strongest spatial edge"
     )
 
-    valid_mask = (
-        mask
-        &
-        wetting
+    validated_mask = (
+        time_mask
         &
         np.isfinite(
             validated
@@ -5838,24 +6079,52 @@ def save_onset_diagnostic_plot(
 
     ax.scatter(
         times[
-            valid_mask
+            validated_mask
         ],
         validated[
-            valid_mask
+            validated_mask
         ],
-        s=18,
+        s=16,
+        alpha=0.30,
         label="Temporal wetting validation"
     )
 
-    ax.plot(
+    final_mask = (
+        time_mask
+        &
+        np.isfinite(
+            final_measured
+        )
+    )
+
+    ax.scatter(
         times[
-            mask
+            final_mask
         ],
-        tracked[
-            mask
+        final_measured[
+            final_mask
         ],
-        linewidth=2.2,
-        label="Tracked"
+        s=26,
+        label="Final actual measured series"
+    )
+
+    anchor_mask = (
+        time_mask
+        &
+        np.isfinite(
+            anchors
+        )
+    )
+
+    ax.scatter(
+        times[
+            anchor_mask
+        ],
+        anchors[
+            anchor_mask
+        ],
+        s=48,
+        label="Confirmation / review anchors"
     )
 
     ax.set_xlabel(
@@ -5889,150 +6158,175 @@ def save_onset_diagnostic_plot(
     )
 
 
-# ============================================================
-# FOLDER AVERAGE
-#
-# TRACKED DATA ONLY
-# ============================================================
 
 def calculate_folder_average(
     video_results
 ):
+    """
+    Average the final high-resolution ACTUAL measurement series.
 
-    if len(video_results) == 0:
+    No temporal interpolation is used.
+
+    Runs are aligned by frame index. At each frame, only finite
+    actual measurements contribute.
+    """
+
+    if len(
+        video_results
+    ) == 0:
         return None
 
-    if len(video_results) == 1:
-
-        run = (
-            video_results[0]
-        )
-
-        return {
-            "time_s":
-                run[
-                    "time_s"
-                ].copy(),
-
-            "mean_mm":
-                run[
-                    "height_tracked_mm"
-                ].copy(),
-
-            "std_mm":
-                np.zeros_like(
-                    run[
-                        "height_tracked_mm"
-                    ]
-                ),
-
-            "n":
-                1
-        }
-
-    dt_values = []
-
-    for run in video_results:
-
-        times = (
+    lengths = [
+        len(
             run[
                 "time_s"
             ]
         )
+        for run
+        in video_results
+    ]
 
-        if len(times) >= 2:
+    frame_limit = (
+        min(
+            lengths
+        )
+        if AVERAGE_USE_COMMON_TIME_ONLY
+        else max(
+            lengths
+        )
+    )
 
-            dt_values.append(
-                np.median(
-                    np.diff(
-                        times
-                    )
+    output_time = []
+
+    output_mean = []
+
+    output_std = []
+
+    output_count = []
+
+    for frame_index in range(
+        frame_limit
+    ):
+
+        values = []
+
+        times_here = []
+
+        for run in video_results:
+
+            if (
+                frame_index
+                >= len(
+                    run[
+                        "time_s"
+                    ]
+                )
+            ):
+                continue
+
+            value = float(
+                run[
+                    "height_final_measured_mm"
+                ][
+                    frame_index
+                ]
+            )
+
+            if not np.isfinite(
+                value
+            ):
+                continue
+
+            values.append(
+                value
+            )
+
+            times_here.append(
+                float(
+                    run[
+                        "time_s"
+                    ][
+                        frame_index
+                    ]
                 )
             )
 
-    if not dt_values:
+        if not values:
+            continue
 
+        values = np.asarray(
+            values,
+            dtype=np.float64
+        )
+
+        times_here = np.asarray(
+            times_here,
+            dtype=np.float64
+        )
+
+        output_time.append(
+            float(
+                np.mean(
+                    times_here
+                )
+            )
+        )
+
+        output_mean.append(
+            float(
+                np.mean(
+                    values
+                )
+            )
+        )
+
+        output_std.append(
+            float(
+                np.std(
+                    values,
+                    ddof=0
+                )
+            )
+        )
+
+        output_count.append(
+            int(
+                len(
+                    values
+                )
+            )
+        )
+
+    if not output_time:
         raise RuntimeError(
-            "Cannot determine average time step."
+            "No final actual measurements available "
+            "for folder averaging."
         )
-
-    dt = float(
-        np.max(
-            dt_values
-        )
-    )
-
-    if AVERAGE_USE_COMMON_TIME_ONLY:
-
-        end_time = min(
-            float(
-                run[
-                    "time_s"
-                ][-1]
-            )
-            for run in video_results
-        )
-
-    else:
-
-        end_time = max(
-            float(
-                run[
-                    "time_s"
-                ][-1]
-            )
-            for run in video_results
-        )
-
-    common_time = np.arange(
-        0.0,
-        end_time
-        + 0.5 * dt,
-        dt
-    )
-
-    interpolated = []
-
-    for run in video_results:
-
-        curve = np.interp(
-            common_time,
-            run[
-                "time_s"
-            ],
-            run[
-                "height_tracked_mm"
-            ]
-        )
-
-        interpolated.append(
-            curve
-        )
-
-    matrix = np.vstack(
-        interpolated
-    )
-
-    mean = np.mean(
-        matrix,
-        axis=0
-    )
-
-    std = np.std(
-        matrix,
-        axis=0,
-        ddof=0
-    )
 
     return {
         "time_s":
-            common_time,
+            np.asarray(
+                output_time,
+                dtype=np.float64
+            ),
 
         "mean_mm":
-            mean,
+            np.asarray(
+                output_mean,
+                dtype=np.float64
+            ),
 
         "std_mm":
-            std,
+            np.asarray(
+                output_std,
+                dtype=np.float64
+            ),
+
+        "n_measurements":
+            np.asarray(
+                output_count,
+                dtype=int
+            ),
 
         "n":
             len(
@@ -6041,9 +6335,6 @@ def calculate_folder_average(
     }
 
 
-# ============================================================
-# SAVE FOLDER AVERAGE CSV
-# ============================================================
 
 def save_folder_average_csv(
     output_path,
@@ -6063,16 +6354,18 @@ def save_folder_average_csv(
         writer.writerow(
             [
                 "time_s",
-                "mean_tracked_height_mm",
-                "std_tracked_height_mm",
-                "number_of_videos"
+                "mean_final_actual_height_mm",
+                "std_final_actual_height_mm",
+                "number_of_actual_measurements",
+                "number_of_videos_total"
             ]
         )
 
         for (
             time_s,
             mean,
-            std
+            std,
+            count
         ) in zip(
             average[
                 "time_s"
@@ -6082,6 +6375,9 @@ def save_folder_average_csv(
             ],
             average[
                 "std_mm"
+            ],
+            average[
+                "n_measurements"
             ]
         ):
 
@@ -6090,16 +6386,17 @@ def save_folder_average_csv(
                     f"{time_s:.6f}",
                     f"{mean:.6f}",
                     f"{std:.6f}",
-                    average[
-                        "n"
-                    ]
+                    int(
+                        count
+                    ),
+                    int(
+                        average[
+                            "n"
+                        ]
+                    )
                 ]
             )
 
-
-# ============================================================
-# FOLDER AVERAGE PLOT
-# ============================================================
 
 def save_folder_average_plot(
     output_path,
@@ -6126,25 +6423,54 @@ def save_folder_average_plot(
         "std_mm"
     ]
 
-    mean_line, = ax.plot(
-        time,
-        mean,
-        linestyle="-",
-        linewidth=2.2,
-        label="Average tracked rise"
+    count = average[
+        "n_measurements"
+    ]
+
+    multi = (
+        count
+        > 1
     )
 
-    if average[
-        "n"
-    ] > 1:
+    single = (
+        count
+        == 1
+    )
 
-        ax.fill_between(
-            time,
-            mean - std,
-            mean + std,
-            color=mean_line.get_color(),
-            alpha=0.15,
-            label="±1 SD"
+    if np.any(
+        multi
+    ):
+
+        ax.errorbar(
+            time[
+                multi
+            ],
+            mean[
+                multi
+            ],
+            yerr=std[
+                multi
+            ],
+            fmt="o",
+            markersize=3,
+            linewidth=0.8,
+            capsize=2,
+            label="Measured mean ±1 SD"
+        )
+
+    if np.any(
+        single
+    ):
+
+        ax.scatter(
+            time[
+                single
+            ],
+            mean[
+                single
+            ],
+            s=12,
+            label="Single contributing measurement"
         )
 
     ax.set_xlabel(
@@ -6178,9 +6504,7 @@ def save_folder_average_plot(
     )
 
 
-# ============================================================
-# FOLDER COMPARISON
-# ============================================================
+
 
 def save_folder_comparison_plot(
     output_path,
@@ -6198,33 +6522,49 @@ def save_folder_comparison_plot(
 
     for run in video_results:
 
-        ax.plot(
+        times = np.asarray(
             run[
                 "time_s"
             ],
+            dtype=np.float64
+        )
+
+        values = np.asarray(
             run[
-                "height_tracked_mm"
+                "height_final_measured_mm"
             ],
-            linestyle="--",
-            linewidth=1.2,
-            alpha=0.75,
+            dtype=np.float64
+        )
+
+        mask = np.isfinite(
+            values
+        )
+
+        ax.scatter(
+            times[
+                mask
+            ],
+            values[
+                mask
+            ],
+            s=6,
+            alpha=0.65,
             label=run[
                 "video_name"
             ]
         )
 
-    ax.plot(
+    ax.scatter(
         average[
             "time_s"
         ],
         average[
             "mean_mm"
         ],
-        linestyle="-",
-        linewidth=2.8,
+        s=14,
         label=(
-            f"Average "
-            f"(n={average['n']})"
+            f"Measured average "
+            f"(videos={average['n']})"
         )
     )
 
@@ -6261,10 +6601,6 @@ def save_folder_comparison_plot(
     )
 
 
-# ============================================================
-# ALL FOLDER AVERAGES
-# ============================================================
-
 def save_all_folder_averages_plot(
     output_path,
     root_name,
@@ -6286,14 +6622,14 @@ def save_all_folder_averages_plot(
         average
     ) in folder_averages.items():
 
-        ax.plot(
+        ax.scatter(
             average[
                 "time_s"
             ],
             average[
                 "mean_mm"
             ],
-            linewidth=2.0,
+            s=12,
             label=folder_name
         )
 
@@ -6327,10 +6663,6 @@ def save_all_folder_averages_plot(
         fig
     )
 
-
-# ============================================================
-# PROCESS ONE VIDEO
-# ============================================================
 
 def process_video(
     video_path,
@@ -6623,6 +6955,12 @@ def process_video(
 
     confidence_scores = []
 
+    raw_wetting_steps = []
+
+    raw_wetting_scores = []
+
+    raw_wetting_valid_flags = []
+
     validated_y = []
 
     validated_confidence_scores = []
@@ -6664,6 +7002,30 @@ def process_video(
             float(
                 detection[
                     "raw_confidence_score"
+                ]
+            )
+        )
+
+        raw_wetting_steps.append(
+            float(
+                detection[
+                    "raw_wetting_step_L"
+                ]
+            )
+        )
+
+        raw_wetting_scores.append(
+            float(
+                detection[
+                    "raw_wetting_score"
+                ]
+            )
+        )
+
+        raw_wetting_valid_flags.append(
+            bool(
+                detection[
+                    "raw_wetting_valid"
                 ]
             )
         )
@@ -6752,6 +7114,21 @@ def process_video(
     confidence_scores = np.asarray(
         confidence_scores,
         dtype=np.float64
+    )
+
+    raw_wetting_steps = np.asarray(
+        raw_wetting_steps,
+        dtype=np.float64
+    )
+
+    raw_wetting_scores = np.asarray(
+        raw_wetting_scores,
+        dtype=np.float64
+    )
+
+    raw_wetting_valid_flags = np.asarray(
+        raw_wetting_valid_flags,
+        dtype=bool
     )
 
     validated_y = np.asarray(
@@ -6915,7 +7292,34 @@ def process_video(
     ) = build_monotonic_tracked_curve(
         times,
         height_validated_mm,
-        validated_confidence_percent
+        validated_confidence_percent,
+        raw_height_mm=height_raw_mm,
+        raw_confidence_percent=confidence_percent,
+        raw_wetting_score=raw_wetting_scores
+    )
+
+
+    # ========================================================
+    # FINAL HIGH-RESOLUTION ACTUAL MEASURED SERIES
+    # ========================================================
+
+    (
+        height_final_measured_mm,
+        final_measurement_source
+    ) = build_final_measured_series(
+        height_validated_mm,
+        confirmation_records,
+        height_raw_mm
+    )
+
+    final_measurement_mask = np.isfinite(
+        height_final_measured_mm
+    )
+
+    print(
+        f"Final actual measured points: "
+        f"{int(np.sum(final_measurement_mask))}/"
+        f"{actual_frames}"
     )
 
     print()
@@ -6960,6 +7364,15 @@ def process_video(
         ) == "reviewed"
     )
 
+    onset_reviewed_count = sum(
+        1
+        for record
+        in confirmation_records
+        if record.get(
+            "type"
+        ) == "onset_reviewed"
+    )
+
     strong_count = sum(
         1
         for record
@@ -6977,6 +7390,15 @@ def process_video(
     print(
         f"  retrospectively reviewed anchors: "
         f"{reviewed_count}"
+    )
+
+    print(
+        f"  onset-backtracked actual measurements: "
+        f"{onset_reviewed_count}"
+    )
+
+    print(
+        "  temporal interpolation: DISABLED"
     )
 
     print()
@@ -7024,23 +7446,35 @@ def process_video(
             "confirmed"
         )
 
-        rule_window = (
-            TRACK_REVIEW_WINDOW
-            if record_type
-            == "reviewed"
-            else TRACK_CONFIRM_WINDOW
-        )
+        if record_type == "onset_reviewed":
 
-        print(
-            f"  [{record_type}] "
-            f"frame "
-            f"{record['anchor_index']}: "
-            f"{record['height']:.3f} mm "
-            f"supported by "
-            f"{record['support_count']}/"
-            f"{rule_window} "
-            f"frames [{support_text}]"
-        )
+            print(
+                f"  [{record_type}] "
+                f"frame "
+                f"{record['anchor_index']}: "
+                f"{record['height']:.3f} mm "
+                f"(actual raw frame measurement)"
+            )
+
+        else:
+
+            rule_window = (
+                TRACK_REVIEW_WINDOW
+                if record_type
+                == "reviewed"
+                else TRACK_CONFIRM_WINDOW
+            )
+
+            print(
+                f"  [{record_type}] "
+                f"frame "
+                f"{record['anchor_index']}: "
+                f"{record['height']:.3f} mm "
+                f"supported by "
+                f"{record['support_count']}/"
+                f"{rule_window} "
+                f"frames [{support_text}]"
+            )
 
     if (
         len(
@@ -7063,12 +7497,37 @@ def process_video(
 
     tracked_y = np.asarray(
         [
-            height_mm_to_y(
-                value,
-                scale_positions
+            (
+                height_mm_to_y(
+                    value,
+                    scale_positions
+                )
+                if np.isfinite(
+                    value
+                )
+                else np.nan
             )
             for value
             in height_tracked_mm
+        ],
+        dtype=np.float64
+    )
+
+
+    final_measured_y = np.asarray(
+        [
+            (
+                height_mm_to_y(
+                    value,
+                    scale_positions
+                )
+                if np.isfinite(
+                    value
+                )
+                else np.nan
+            )
+            for value
+            in height_final_measured_mm
         ],
         dtype=np.float64
     )
@@ -7079,7 +7538,17 @@ def process_video(
 
     nearest_ruler_mm = []
 
-    for y in tracked_y:
+    for y in final_measured_y:
+
+        if not np.isfinite(
+            y
+        ):
+
+            nearest_ruler_mm.append(
+                np.nan
+            )
+
+            continue
 
         nearest = find_closest_scale_line(
             y,
@@ -7111,6 +7580,23 @@ def process_video(
     # ========================================================
     # RESULTS
     # ========================================================
+
+    tracking_type_by_frame = {
+        int(
+            record[
+                "anchor_index"
+            ]
+        ):
+        str(
+            record.get(
+                "type",
+                ""
+            )
+        )
+
+        for record
+        in confirmation_records
+    }
 
     results = []
 
@@ -7198,6 +7684,21 @@ def process_video(
                         height_tracked_mm[i]
                     ),
 
+                "height_final_measured_mm":
+                    float(
+                        height_final_measured_mm[i]
+                    ),
+
+                "front_y_final_measured":
+                    float(
+                        final_measured_y[i]
+                    ),
+
+                "final_measurement_source":
+                    str(
+                        final_measurement_source[i]
+                    ),
+
                 "tracking_anchor":
                     bool(
                         tracking_anchor_mask[i]
@@ -7216,6 +7717,29 @@ def process_video(
                 "confidence_percent":
                     float(
                         confidence_percent[i]
+                    ),
+
+                "raw_wetting_step_L":
+                    float(
+                        raw_wetting_steps[i]
+                    ),
+
+                "raw_wetting_score":
+                    float(
+                        raw_wetting_scores[i]
+                    ),
+
+                "raw_wetting_valid":
+                    bool(
+                        raw_wetting_valid_flags[i]
+                    ),
+
+                "tracking_type":
+                    tracking_type_by_frame.get(
+                        int(
+                            i
+                        ),
+                        ""
                     )
             }
         )
@@ -7270,20 +7794,96 @@ def process_video(
             if not success:
                 break
 
-            y_display = int(
-                round(
-                    tracked_y[
+            final_value = float(
+                height_final_measured_mm[
+                    frame_number
+                ]
+            )
+
+            final_source = str(
+                final_measurement_source[
+                    frame_number
+                ]
+            )
+
+            if np.isfinite(
+                final_value
+            ):
+
+                y_display = float(
+                    final_measured_y[
                         frame_number
                     ]
                 )
-            )
 
-            nearest = find_closest_scale_line(
-                tracked_y[
-                    frame_number
-                ],
-                scale_positions
-            )
+                display_height = final_value
+
+                if (
+                    final_source
+                    == "onset_reviewed_raw"
+                ):
+
+                    display_confidence = float(
+                        confidence_scores[
+                            frame_number
+                        ]
+                    )
+
+                    measurement_label = (
+                        "retrospectively accepted actual height"
+                    )
+
+                elif (
+                    final_source
+                    == "initial_condition"
+                ):
+
+                    display_confidence = 0.0
+
+                    measurement_label = (
+                        "initial height"
+                    )
+
+                else:
+
+                    display_confidence = float(
+                        validated_confidence_scores[
+                            frame_number
+                        ]
+                    )
+
+                    measurement_label = (
+                        "actual measured height"
+                    )
+
+            else:
+
+                y_display = None
+
+                display_height = None
+
+                display_confidence = 0.0
+
+                measurement_label = (
+                    "height"
+                )
+
+            if (
+                y_display is not None
+                and
+                np.isfinite(
+                    y_display
+                )
+            ):
+
+                nearest = find_closest_scale_line(
+                    y_display,
+                    scale_positions
+                )
+
+            else:
+
+                nearest = None
 
             static_frame = draw_static_geometry(
                 frame,
@@ -7301,16 +7901,13 @@ def process_video(
                 left_sample_line,
                 right_sample_line,
                 y_display,
-                height_tracked_mm[
-                    frame_number
-                ],
+                display_height,
                 nearest,
-                validated_confidence_scores[
-                    frame_number
-                ],
+                display_confidence,
                 times[
                     frame_number
-                ]
+                ],
+                measurement_label=measurement_label
             )
 
             writer.write(
@@ -7407,9 +8004,14 @@ def process_video(
         "height_smoothed_mm":
             height_smoothed_mm,
 
-        # THIS is used for folder averaging.
+        # Confirmation/review anchors only.
         "height_tracked_mm":
-            height_tracked_mm
+            height_tracked_mm,
+
+        # High-resolution ACTUAL measured series used for
+        # averaging. Unresolved frames remain NaN.
+        "height_final_measured_mm":
+            height_final_measured_mm
     }
 
 
